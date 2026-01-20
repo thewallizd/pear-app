@@ -16,13 +16,14 @@ import FriendsList from "@/components/FriendsList";
 import GroupChat from "@/components/GroupChat"; 
 import Onboarding from "@/components/Onboarding"; 
 import FeedbackForum from "@/components/FeedbackForum";
+import Spaces from "@/components/Spaces"; // <--- IMPORT BARU
 
 export default function Home() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("Home");
   const [sortBy, setSortBy] = useState("trending");
-  const [limit, setLimit] = useState(10); // STATE LIMIT BARU
+  const [limit, setLimit] = useState(10); 
 
   const [myName, setMyName] = useState(null); 
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -52,23 +53,17 @@ export default function Home() {
       let dbQuery = supabase.from("posts").select("*");
 
       if (query.trim()) {
-        // Mode Pencarian
         dbQuery = dbQuery.or(`content.ilike.%${query}%,author.ilike.%${query}%,title.ilike.%${query}%`);
       } else {
-        // Mode Normal (Sortir)
         if (sortBy === "trending") {
-            // Hot this week (7 hari terakhir)
             const sevenDaysAgo = new Date(new Date().getTime() - (7 * 24 * 60 * 60 * 1000)).toISOString();
             dbQuery = dbQuery.gt("created_at", sevenDaysAgo).order("votes", { ascending: false });
         } else {
-            // Newest
             dbQuery = dbQuery.order("created_at", { ascending: false });
         }
       }
 
-      // Pagination Limit
       dbQuery = dbQuery.limit(limit);
-
       const { data } = await dbQuery;
       if (data) setPosts(data);
       setLoading(false);
@@ -104,16 +99,8 @@ export default function Home() {
     return () => { supabase.removeChannel(channel); supabase.removeChannel(presenceChannel); };
   };
 
-  // Re-fetch saat sortBy atau limit berubah
-  useEffect(() => {
-      if (myName) fetchData(myName, searchQuery);
-  }, [sortBy, limit]);
-
-  const handleLoadMore = () => {
-      setLimit(prev => prev + 10);
-      // Fetch akan dipanggil otomatis oleh useEffect di atas karena 'limit' berubah
-  };
-
+  useEffect(() => { if (myName) fetchData(myName, searchQuery); }, [sortBy, limit]);
+  const handleLoadMore = () => { setLimit(prev => prev + 10); };
   const handleSearch = (e) => { e.preventDefault(); setIsSearching(true); fetchData(myName, searchQuery); };
   const clearSearch = () => { setSearchQuery(""); setIsSearching(false); fetchData(myName, ""); };
   const handleLoginSuccess = (username) => { localStorage.setItem('pear_username', username); setMyName(username); fetchData(username); };
@@ -136,13 +123,17 @@ export default function Home() {
 
       <div className="max-w-6xl mx-auto flex gap-6 px-4 pt-6">
         
-        {/* --- NAVBAR / SIDEBAR (DESKTOP) --- */}
+        {/* --- SIDEBAR --- */}
         <aside className="hidden md:flex flex-col w-64 shrink-0 space-y-2 sticky top-6 h-fit">
           <button onClick={() => setActiveTab("Home")} className="text-2xl font-bold text-green-600 mb-6 flex items-center gap-2 hover:scale-105 transition text-left w-fit" title="Kembali ke Beranda">
-            🍐 Pear <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Beta</span>
+            🍐 Pear <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Universal</span>
           </button>
           
           <button onClick={() => setActiveTab("Friends")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Friends" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Friends 👥</button>
+          
+          {/* MENU BARU: SPACE */}
+          <button onClick={() => setActiveTab("Space")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Space" ? "bg-purple-50 text-purple-700 font-bold border border-purple-100" : "text-gray-700 hover:bg-white"}`}>Space 🎙️</button>
+
           <button onClick={() => setActiveTab("Chat 💬")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Chat 💬" || activeTab === "Private" || activeTab === "GlobalChat" || activeTab === "GroupChat" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Chat 💬</button>
           
           <button onClick={() => setActiveTab("Feedback")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Feedback" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>
@@ -158,13 +149,15 @@ export default function Home() {
           <div className="md:hidden flex justify-between items-center mb-4 sticky top-0 bg-gray-50/95 backdrop-blur z-10 py-2">
             <button onClick={() => setActiveTab("Home")} className="text-xl font-bold text-green-600 hover:opacity-80">Pear 🍐</button>
             <div className="flex gap-2">
-              <button onClick={() => setActiveTab("Feedback")} className="text-xs font-bold border px-2 py-1 rounded">📢</button>
-              <button onClick={() => setActiveTab("Friends")} className="text-xs font-bold border px-2 py-1 rounded">👥</button>
+              <button onClick={() => setActiveTab("Space")} className="text-xs font-bold border px-2 py-1 rounded">🎙️</button>
               <button onClick={() => setActiveTab('Chat 💬')} className="text-xs font-bold border px-2 py-1 rounded">💬</button>
               <button onClick={handleOpenNotif} className="text-xs font-bold border px-2 py-1 rounded relative">🔔 {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 w-3 h-3 rounded-full border-2 border-white"></span>}</button>
               <button onClick={() => setActiveTab('Profile')} className="text-xs font-bold border px-2 py-1 rounded">👤</button>
             </div>
           </div>
+
+          {/* RENDER PAGES */}
+          {activeTab === "Space" && <Spaces myName={myName} onVisitProfile={handleVisitProfile} />}
 
           {activeTab === "Feedback" && <FeedbackForum myName={myName} />}
           {activeTab === "Friends" && <FriendsList myName={myName} onlineUsers={onlineUsers} onVisitProfile={handleVisitProfile} onChat={startPrivateChat} />}
@@ -180,16 +173,15 @@ export default function Home() {
           {activeTab === "Home" && (
             <>
               <form onSubmit={handleSearch} className="mb-4 relative group">
-                <input type="text" placeholder="Cari postingan, topik, atau user..." className="w-full p-3 pl-10 rounded-2xl border border-gray-200 bg-white focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100 transition shadow-sm" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                <input type="text" placeholder="Cari di seluruh semesta..." className="w-full p-3 pl-10 rounded-2xl border border-gray-200 bg-white focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100 transition shadow-sm" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                 <span className="absolute left-3 top-3.5 text-gray-400">🔍</span>
                 {searchQuery && <button type="button" onClick={clearSearch} className="absolute right-3 top-2.5 text-gray-400 hover:text-red-500 p-1 hover:bg-red-50 rounded-full transition">✖</button>}
               </form>
 
-              {/* SORTING BAR BARU & MODERN */}
               {!isSearching && (
                 <div className="flex items-center gap-2 mb-6 p-1 bg-white rounded-xl border border-gray-100 w-fit shadow-sm">
                   <button onClick={() => setSortBy("trending")} className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${sortBy === "trending" ? "bg-orange-100 text-orange-700" : "text-gray-500 hover:bg-gray-50"}`}>
-                    🔥 Lagi Panas (Minggu Ini)
+                    🔥 Lagi Panas
                   </button>
                   <button onClick={() => setSortBy("newest")} className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${sortBy === "newest" ? "bg-green-100 text-green-700" : "text-gray-500 hover:bg-gray-50"}`}>
                     ✨ Baru Mateng
@@ -203,14 +195,13 @@ export default function Home() {
               
               <div className="space-y-4">
                 {loading && posts.length === 0 ? (
-                    // LOADING SKELETON
                     <div className="animate-pulse space-y-4">
                         {[1,2].map(i => <div key={i} className="h-40 bg-gray-200 rounded-2xl"></div>)}
                     </div>
                 ) : posts.length === 0 ? (
                     <div className="text-center py-16 text-gray-400 bg-white rounded-3xl border border-dashed border-gray-200">
                         <div className="text-4xl mb-2">📭</div>
-                        {isSearching ? `Tidak ada hasil untuk "${searchQuery}".` : "Belum ada postingan minggu ini."}
+                        {isSearching ? `Tidak ada hasil untuk "${searchQuery}".` : "Belum ada postingan."}
                     </div>
                 ) : (
                     <>
@@ -218,7 +209,6 @@ export default function Home() {
                             <PostCard key={post.id} {...post} createdAt={post.created_at} onUserClick={handleVisitProfile} myName={myName} />
                         ))}
                         
-                        {/* TOMBOL LOAD MORE */}
                         {!isSearching && (
                             <button onClick={handleLoadMore} className="w-full py-3 bg-white border border-gray-200 text-gray-500 font-bold rounded-xl hover:bg-gray-50 transition text-sm">
                                 Muat Lebih Banyak ⬇️
