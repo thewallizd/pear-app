@@ -1,155 +1,119 @@
-'use client'
-import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabaseClient'
+"use client";
+import { useState, useRef } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
-export default function CreatePost() {
-  const [content, setContent] = useState('')
-  const [title, setTitle] = useState('')
-  const [type, setType] = useState('thought') // Default: thought (Nyeletuk)
-  const [loading, setLoading] = useState(false)
-  const [authorName, setAuthorName] = useState('Anonim') // State buat nyimpen nama
+export default function CreatePost({ myName }) {
+  const [content, setContent] = useState('');
+  const [title, setTitle] = useState('');
+  const [type, setType] = useState('thought'); 
+  const [isPosting, setIsPosting] = useState(false);
+  
+  // STATE BARU: GAMBAR & RATING
+  const [imageFile, setImageFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [rating, setRating] = useState(0); // 0 - 5
+  const fileInputRef = useRef(null);
 
-  // Ambil nama dari LocalStorage begitu komponen muncul
-  useEffect(() => {
-    const savedName = localStorage.getItem('pear_username')
-    if (savedName) setAuthorName(savedName)
-  }, [])
-
-  // Konfigurasi Mode (Nyeletuk, Deep Talk, Suhu)
-  const modes = {
-    thought: { 
-      label: 'Nyeletuk', 
-      placeholder: 'Tulis celetukan singkat...', 
-      hasTitle: false,
-      buttonColor: 'bg-black',
-      limit: 280 
-    },
-    discussion: { 
-      label: 'Deep Talk', 
-      placeholder: 'Jabarkan opinimu...', 
-      titlePlaceholder: 'Topik Bahasan',
-      hasTitle: true,
-      buttonColor: 'bg-orange-600',
-      limit: 2000
-    },
-    question: { 
-      label: 'Suhu', 
-      placeholder: 'Kasih konteks masalahnya...', 
-      titlePlaceholder: 'Mau tanya apa?',
-      hasTitle: true,
-      buttonColor: 'bg-blue-600', 
-      limit: 1000
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) return alert("File kegedean! Maksimal 2MB ya.");
+      setImageFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
     }
-  }
-
-  const currentMode = modes[type]
+  };
 
   const handleSubmit = async (e) => {
-    e.preventDefault()
+    e.preventDefault();
+    if (!content.trim() && !imageFile) return;
 
-    // Validasi Input
-    if (!content.trim()) return alert("Isi postingan tidak boleh kosong!")
-    if (currentMode.hasTitle && !title.trim()) return alert("Judul wajib diisi!")
+    setIsPosting(true);
+    const authorName = myName || 'Anonim'; 
+    let uploadedImageUrl = null;
 
-    setLoading(true)
-
-    // Kirim ke Supabase
-    const { error } = await supabase
-      .from('posts')
-      .insert([{ 
-        title: currentMode.hasTitle ? title : null, 
-        content, 
-        type, 
-        votes: 0,
-        author: authorName // Menggunakan nama dari state
-      }])
-
-    setLoading(false)
-
-    if (error) {
-      alert('Gagal posting: ' + error.message)
-    } else {
-      // Sukses: Reset Form
-      setContent('')
-      setTitle('')
+    if (imageFile) {
+      const fileName = `${Date.now()}-${authorName}-${imageFile.name}`;
+      const { error: uploadError } = await supabase.storage.from('post-images').upload(fileName, imageFile);
+      if (uploadError) { alert("Gagal upload gambar"); setIsPosting(false); return; }
+      const { data: publicData } = supabase.storage.from('post-images').getPublicUrl(fileName);
+      uploadedImageUrl = publicData.publicUrl;
     }
-  }
+
+    const { error } = await supabase.from('posts').insert([{ 
+      title: type === 'thought' ? null : title,
+      content, 
+      type,
+      votes: 0,
+      author: authorName,
+      image_url: uploadedImageUrl,
+      rating: type === 'review' ? rating : 0, // Simpan rating cuma kalau tipe Review
+      is_pinned: false
+    }]);
+
+    if (!error) {
+      setContent(''); setTitle(''); setType('thought'); setImageFile(null); setPreviewUrl(null); setRating(0);
+    } else {
+      alert("Gagal posting!");
+    }
+    setIsPosting(false);
+  };
 
   return (
-    <div className="bg-white p-5 rounded-xl border border-gray-200 mb-6 shadow-sm transition-all duration-300">
+    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 transition-all">
       
-      {/* 1. TAB MODE SWITCHER */}
-      <div className="flex gap-2 mb-4 bg-gray-50 p-1 rounded-lg">
-        {Object.keys(modes).map((key) => (
-          <button
-            key={key}
-            onClick={() => { 
-              setType(key); 
-              setTitle(''); 
-              setContent(''); 
-            }}
-            className={`flex-1 text-xs font-bold py-2 rounded-md transition-all duration-200 ${
-              type === key 
-                ? 'bg-white text-gray-800 shadow-sm border border-gray-200' 
-                : 'text-gray-400 hover:text-gray-600'
-            }`}
-          >
-            {modes[key].label}
-          </button>
+      {/* Tipe Post: Tambah 'Review' */}
+      <div className="flex gap-2 mb-3 overflow-x-auto pb-1 no-scrollbar">
+        {[
+          { id: 'thought', label: '💭 Nyeletuk', color: 'bg-gray-100 text-gray-600' },
+          { id: 'review', label: '⭐ Review', color: 'bg-green-100 text-green-700' }, // <--- TIPE BARU
+          { id: 'discussion', label: '☕ Deep Talk', color: 'bg-orange-100 text-orange-700' },
+          { id: 'question', label: '☝️ Tanya', color: 'bg-blue-100 text-blue-700' }
+        ].map((t) => (
+          <button key={t.id} onClick={() => setType(t.id)} className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all ${type === t.id ? 'bg-green-600 text-white shadow-md transform scale-105' : `${t.color} hover:opacity-80`}`}>{t.label}</button>
         ))}
       </div>
 
       <form onSubmit={handleSubmit}>
-        
-        {/* 2. INPUT JUDUL (Hanya muncul di Deep Talk & Suhu) */}
-        {currentMode.hasTitle && (
-          <div className="mb-3 animate-in fade-in slide-in-from-top-2 duration-300">
-            <input
-              type="text"
-              placeholder={currentMode.titlePlaceholder}
-              className="w-full p-3 bg-gray-50 rounded-lg text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-100 transition border border-transparent focus:border-green-300"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
+        {/* Input Judul (Untuk Review, Discussion, Question) */}
+        {type !== 'thought' && (
+          <input type="text" placeholder={type === 'review' ? "Apa yang mau di-review?" : "Topik bahasannya apa?"} className="w-full mb-2 p-2 text-sm font-bold border-b border-gray-100 focus:outline-none focus:border-green-500 bg-transparent" value={title} onChange={(e) => setTitle(e.target.value)} />
+        )}
+
+        {/* INPUT BINTANG (Khusus Review) */}
+        {type === 'review' && (
+          <div className="flex gap-1 mb-2 animate-in slide-in-from-left-2">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <button 
+                key={star} 
+                type="button" 
+                onClick={() => setRating(star)}
+                className={`text-2xl transition hover:scale-125 ${star <= rating ? 'text-yellow-400' : 'text-gray-200'}`}
+              >
+                ★
+              </button>
+            ))}
+            <span className="text-xs text-gray-400 self-center ml-2">({rating}/5)</span>
           </div>
         )}
 
-        {/* 3. INPUT KONTEN */}
-        <div className="relative">
-          <textarea
-            className="w-full p-3 bg-gray-50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-100 transition resize-none border border-transparent focus:border-green-300"
-            placeholder={currentMode.placeholder}
-            rows={type === 'thought' ? 2 : 5}
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            maxLength={currentMode.limit}
-          />
-          {/* Counter Karakter */}
-          <div className="absolute bottom-2 right-2 text-[10px] text-gray-400 font-mono bg-white/80 px-1 rounded">
-            {content.length}/{currentMode.limit}
+        <textarea className="w-full p-2 text-sm bg-transparent focus:outline-none resize-none placeholder-gray-400" rows="3" placeholder={`Tulis sesuatu...`} value={content} onChange={(e) => setContent(e.target.value)} />
+
+        {previewUrl && (
+          <div className="relative mt-2 mb-2 w-fit">
+            <img src={previewUrl} className="max-h-40 rounded-lg border border-gray-200" />
+            <button type="button" onClick={() => { setImageFile(null); setPreviewUrl(null); }} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600">✖</button>
           </div>
-        </div>
+        )}
 
-        {/* 4. FOOTER & TOMBOL KIRIM */}
-        <div className="flex justify-between items-center mt-3">
-          
-          {/* Indikator Identitas (Baru!) */}
-          <div className="flex flex-col">
-            <span className="text-[10px] text-gray-400">Posting sebagai:</span>
-            <span className="text-xs font-bold text-gray-700 truncate max-w-[100px]">
-              {authorName}
-            </span>
+        <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-50">
+          <div className="flex items-center gap-2">
+            <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
+            <button type="button" onClick={() => fileInputRef.current.click()} className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-full transition">🖼️</button>
+            <span className="text-[10px] text-gray-400">Posting sebagai: <span className="font-bold text-green-600">@{myName}</span></span>
           </div>
-
-          <button
-            disabled={loading}
-            className={`${currentMode.buttonColor} text-white px-6 py-2 rounded-full text-sm font-bold hover:opacity-90 disabled:opacity-50 transition-all shadow-md transform hover:scale-105 active:scale-95`}
-          >
-            {loading ? 'Mengirim...' : `Post ${modes[type].label}`}
-          </button>
+          <button disabled={isPosting || (!content.trim() && !imageFile)} className="bg-green-600 text-white px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-green-700 transition disabled:opacity-50">{isPosting ? '...' : 'Post 🚀'}</button>
         </div>
-
       </form>
     </div>
-  )
+  );
 }
