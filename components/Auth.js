@@ -1,100 +1,124 @@
 "use client";
-import { useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
-import Modal from "@/components/Modal"; 
+import { useState } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function Auth({ onLoginSuccess }) {
-  const [isRegister, setIsRegister] = useState(false);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  
-  const [modal, setModal] = useState({ isOpen: false, title: "", message: "", type: "success" });
-  const closeModal = () => setModal({ ...modal, isOpen: false });
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
 
   const handleAuth = async (e) => {
     e.preventDefault();
     setLoading(true);
-
-    if (!username.trim() || !password.trim()) {
-      setModal({ isOpen: true, title: "Waduh!", message: "Isi dulu username & passwordnya, kawan! 🍐", type: "error" });
-      setLoading(false);
-      return;
-    }
-
-    try {
-      if (isRegister) {
-        // --- LOGIKA DAFTAR ---
-        const { data: existingUser } = await supabase.from("users").select("*").eq("username", username).single();
-        if (existingUser) throw new Error("Yah, Username itu sudah dipakai. Cari yang lain ya!");
-
-        // Insert User Baru (Tanpa mengatur avatar_style manual, biar default DB yang kerja)
-        const { error: insertError } = await supabase.from("users").insert([{ username, password }]);
-        
-        if (insertError) throw insertError;
-
-        setModal({ 
-          isOpen: true, 
-          title: "Berhasil Daftar! 🎉", 
-          message: "Akunmu sudah jadi dengan avatar unik! Silakan login.", 
-          type: "success" 
-        });
-        setIsRegister(false);
-
-      } else {
-        // --- LOGIKA LOGIN ---
-        const { data, error } = await supabase.from("users").select("*").eq("username", username).eq("password", password).single();
-        if (error || !data) throw new Error("Username atau Password salah. Coba ingat-ingat lagi! 🤔");
-
-        onLoginSuccess(data.username);
+    if (isSignUp) {
+      // SIGN UP LOKAL (Simpan ke tabel 'users' sendiri)
+      // 1. Cek username kembar
+      const { data: existingUser } = await supabase.from('users').select('username').eq('username', username).single();
+      if (existingUser) { alert("Username sudah dipakai, cari yang lain ya!"); setLoading(false); return; }
+      
+      // 2. Masukkan data baru
+      const { error } = await supabase.from('users').insert([{ username, password }]); // Password plaintext (HANYA UNTUK DEMO/BETA)
+      if (error) { alert(error.message); } else { alert("Akun berhasil dibuat! Silakan login."); setIsSignUp(false); }
+    } else {
+      // LOGIN LOKAL (Cek ke tabel 'users')
+      const { data, error } = await supabase.from('users').select('*').eq('username', username).eq('password', password).single();
+      if (error || !data) { alert("Username atau password salah!"); } 
+      else { 
+        // Cek apakah dia superadmin (hardcoded sementara)
+        if (username === 'superadmin' && password === 'admin123') {
+            onLoginSuccess('superadmin');
+        } else {
+            onLoginSuccess(data.username); 
+        }
       }
-    } catch (err) {
-      setModal({ isOpen: true, title: "Gagal Masuk", message: err.message, type: "error" });
-    } finally {
-      setLoading(false);
     }
-  };
-
-  const handleForgotPassword = () => {
-    setModal({ isOpen: true, title: "Lupa Sandi?", message: "Silakan hubungi Admin (Developer) untuk mereset passwordmu secara manual. 🔧", type: "confirm" });
+    setLoading(false);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-green-100 p-4">
-      <Modal isOpen={modal.isOpen} onClose={closeModal} title={modal.title} message={modal.message} type={modal.type} onConfirm={closeModal} />
-
-      <div className="bg-white w-full max-w-md p-8 rounded-3xl shadow-xl border border-green-100">
+    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-green-50 via-green-100 to-emerald-50 px-4 py-12 overflow-hidden relative">
+      {/* Hiasan Background Blur */}
+      <div className="absolute top-[-10%] left-[-10%] w-64 h-64 bg-green-300 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob"></div>
+      <div className="absolute bottom-[-10%] right-[-10%] w-64 h-64 bg-emerald-300 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-2000"></div>
+      
+      {/* Card Utama dengan Efek Glassmorphism */}
+      <div className="relative bg-white/80 backdrop-blur-xl p-8 md:p-10 rounded-3xl shadow-xl border border-white/40 w-full max-w-[420px] transition-all duration-500 hover:shadow-2xl">
         <div className="text-center mb-8">
-          <div className="text-5xl mb-2">🍐</div>
-          <h1 className="text-3xl font-bold text-gray-800">Pear</h1>
-          <p className="text-gray-500 text-sm mt-1">Sirkel Eksklusif Warga Depok & Sekitarnya</p>
+          {/* Logo Pear dengan Animasi Halus */}
+          <div className="inline-block p-3 rounded-full bg-green-50 mb-3 shadow-sm animate-bounce-slow">
+             <span className="text-5xl drop-shadow-sm">🍐</span>
+          </div>
+          <h1 className="text-3xl font-black text-gray-800 tracking-tight mb-2">Pear</h1>
+          
+          {/* --- TAGLINE BARU YANG LEBIH ELEGAN & UNIVERSAL --- */}
+          <p className="text-gray-500 text-sm font-medium leading-relaxed">
+            Your Exclusive Space for <br className="hidden md:block"/> Meaningful Connections.
+          </p>
+          {/* -------------------------------------------------- */}
+          
         </div>
 
-        <form onSubmit={handleAuth} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-gray-600 mb-1 ml-1">Username</label>
-            <input type="text" className="w-full p-3 rounded-xl bg-gray-50 border border-gray-200 text-gray-900 font-medium focus:outline-none focus:border-green-500 transition" placeholder="Contoh: kanggabut99" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s/g, ''))} />
+        <form onSubmit={handleAuth} className="space-y-5">
+          <div className="space-y-4">
+            {/* Input Username yang Lebih Bersih */}
+            <div className="relative group">
+                <input 
+                  type="text" 
+                  placeholder="Username"
+                  className="w-full px-4 py-3.5 rounded-xl bg-gray-50/80 border border-gray-200 text-gray-800 placeholder-gray-400 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 transition-all duration-300 outline-none text-sm font-medium"
+                  value={username} 
+                  onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s/g, ''))} 
+                  required 
+                />
+                 <span className="absolute right-4 top-3.5 text-gray-400 opacity-50 group-focus-within:opacity-100 transition">👤</span>
+            </div>
+
+            {/* Input Password yang Lebih Bersih */}
+            <div className="relative group">
+                <input 
+                  type="password" 
+                  placeholder="Password"
+                  className="w-full px-4 py-3.5 rounded-xl bg-gray-50/80 border border-gray-200 text-gray-800 placeholder-gray-400 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 transition-all duration-300 outline-none text-sm font-medium"
+                  value={password} 
+                  onChange={(e) => setPassword(e.target.value)} 
+                  required 
+                />
+                <span className="absolute right-4 top-3.5 text-gray-400 opacity-50 group-focus-within:opacity-100 transition">🔒</span>
+            </div>
           </div>
-          <div>
-            <label className="block text-xs font-bold text-gray-600 mb-1 ml-1">Password</label>
-            <input type="password" className="w-full p-3 rounded-xl bg-gray-50 border border-gray-200 text-gray-900 font-medium focus:outline-none focus:border-green-500 transition" placeholder="Rahasia negara..." value={password} onChange={(e) => setPassword(e.target.value)} />
-          </div>
-          {!isRegister && (
-            <div className="flex justify-end">
-              <button type="button" onClick={handleForgotPassword} className="text-xs text-green-600 hover:text-green-800 font-bold hover:underline">Lupa Kata Sandi?</button>
+          
+          {!isSignUp && (
+            <div className="text-right">
+                <button type="button" className="text-xs font-bold text-green-600 hover:text-green-700 hover:underline transition">Lupa Kata Sandi?</button>
             </div>
           )}
-          <button disabled={loading} className="w-full bg-green-600 text-white font-bold py-3.5 rounded-xl hover:bg-green-700 transition transform active:scale-95 disabled:opacity-50 shadow-lg shadow-green-200">
-            {loading ? "Sabar ya..." : isRegister ? "Daftar Sekarang 🚀" : "Masuk 🚪"}
+
+          {/* Tombol Modern dengan Gradasi & Shadow */}
+          <button 
+            disabled={loading} 
+            className="w-full py-3.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl font-bold text-[15px] shadow-lg shadow-green-500/30 transition-all duration-300 transform hover:-translate-y-0.5 active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {loading ? (
+              <>
+                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                Memproses...
+              </>
+            ) : (isSignUp ? "Buat Akun Baru ✨" : "Masuk ke Pear 🚪")}
           </button>
         </form>
-
-        <div className="mt-6 text-center text-sm text-gray-600">
-          {isRegister ? "Sudah punya akun?" : "Belum jadi warga?"}{" "}
-          <button onClick={() => { setIsRegister(!isRegister); setUsername(""); setPassword(""); }} className="font-bold text-green-600 hover:underline">
-            {isRegister ? "Login aja" : "Bikin akun baru"}
+        
+        <div className="mt-8 text-center text-sm text-gray-500 font-medium">
+          {isSignUp ? "Sudah punya akun warga?" : "Belum jadi warga?"} 
+          <button onClick={() => setIsSignUp(!isSignUp)} className="text-green-600 font-bold hover:underline ml-1 transition">
+            {isSignUp ? "Login aja" : "Bikin akun baru"}
           </button>
         </div>
+      </div>
+      
+      {/* Footer Kecil */}
+      <div className="absolute bottom-4 text-center text-xs text-gray-400 font-medium">
+        © 2024 Pear App. All rights reserved.
       </div>
     </div>
   );
