@@ -12,8 +12,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "Pear App",
-  description: "Social media for our circle",
+  title: "Pear - Exclusive Space",
+  description: "Your Exclusive Space for Meaningful Connections.",
+  icons: {
+    icon: "/icon.png",
+    },
 };
 
 export default function RootLayout({ children }) {
