@@ -5,49 +5,61 @@ import { supabase } from "@/lib/supabaseClient";
 export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }) {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
-  const [isCalling, setIsCalling] = useState(false); // State untuk status telepon
+  const [isCalling, setIsCalling] = useState(false);
   const messagesEndRef = useRef(null);
 
   const isOnline = onlineUsers && onlineUsers.has(partnerName);
 
+  // --- LOGIC PENTING: Bikin Room ID yang konsisten ---
+  // Mengurutkan nama (A-Z) biar Ali & Budi selalu ketemu di room yang sama
+  // Contoh: roomId akan selalu "Ali_Budi", tidak akan pernah "Budi_Ali"
+  const roomId = [myName, partnerName].sort().join('_');
+
   useEffect(() => {
     // 1. Load Chat Lama
     const fetchMessages = async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("messages")
         .select("*")
         .or(`and(sender.eq.${myName},recipient.eq.${partnerName}),and(sender.eq.${partnerName},recipient.eq.${myName})`)
         .order("created_at", { ascending: true });
+      
+      if (error) console.error("Error load chat:", error);
       if (data) setMessages(data);
     };
     fetchMessages();
 
-    // 2. Realtime Listener (Super Agresif - Tangkap semua, saring di sini)
+    // 2. Realtime Listener (Menggunakan roomId yang sudah di-sort)
+    console.log(`Connecting to channel: chat_room:${roomId}`); // Cek console buat debug
+    
     const channel = supabase
-      .channel(`chat_room:${myName}_${partnerName}`)
+      .channel(`chat_room:${roomId}`) // <--- INI KUNCI PERBAIKANNYA
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
         const newMsg = payload.new;
-        
-        // Filter: Hanya terima pesan jika relevan dengan percakapan ini
+        console.log("Pesan baru masuk:", newMsg); // Debugging
+
+        // Logic Saring: Pastikan pesan ini emang buat kita
         const isRelevant = 
             (newMsg.sender === partnerName && newMsg.recipient === myName) ||
             (newMsg.sender === myName && newMsg.recipient === partnerName);
 
         if (isRelevant) {
            setMessages((prev) => {
-               // Cek duplikasi ID (Mencegah pesan dobel karena Optimistic Update)
+               // Cek duplikasi ID biar gak bentrok sama Optimistic Update
                const exists = prev.some(m => m.id === newMsg.id || (m.content === newMsg.content && m.sender === newMsg.sender && m.id < 1));
                if (exists) return prev;
                return [...prev, newMsg];
            });
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log("Status Koneksi Realtime:", status); // Harus "SUBSCRIBED"
+      });
 
     return () => supabase.removeChannel(channel);
-  }, [myName, partnerName]);
+  }, [myName, partnerName, roomId]);
 
-  // Auto Scroll ke bawah setiap ada pesan baru
+  // Auto Scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -56,9 +68,9 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
     e.preventDefault();
     if (!newMessage.trim()) return;
 
-    // --- OPTIMISTIC UPDATE (Agar Chat Terasa Instan) ---
+    // --- Optimistic Update ---
     const tempMsg = {
-        id: Math.random(), // ID Sementara
+        id: Math.random(),
         sender: myName,
         recipient: partnerName,
         content: newMessage,
@@ -66,62 +78,42 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
         is_read: false
     };
 
-    // 1. Tampilkan langsung di layar (tanpa menunggu database)
     setMessages((prev) => [...prev, tempMsg]);
     setNewMessage("");
 
-    // 2. Kirim ke Database di background
-    await supabase.from("messages").insert([{ 
+    // Kirim ke Database
+    const { error } = await supabase.from("messages").insert([{ 
         sender: myName, 
         recipient: partnerName, 
         content: tempMsg.content 
     }]);
+
+    if (error) console.error("Gagal kirim pesan:", error);
   };
 
-  // --- TAMPILAN MODE TELEPON (CALLING UI) ---
+  // --- TAMPILAN MODE TELEPON ---
   if (isCalling) {
     return (
-      <div className="bg-gray-900 text-white rounded-3xl h-[600px] flex flex-col items-center justify-center relative overflow-hidden animate-in zoom-in duration-300 shadow-2xl">
-        {/* Background Pattern Halus */}
+      <div className="bg-gray-900 text-white rounded-3xl h-[600px] flex flex-col items-center justify-center relative overflow-hidden animate-in zoom-in duration-300">
         <div className="absolute top-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
-        
-        {/* Avatar Berdenyut */}
         <div className="relative mb-8">
             <div className="absolute inset-0 bg-green-500 rounded-full animate-ping opacity-50"></div>
-            <img 
-                src={`https://api.dicebear.com/9.x/notionists/svg?seed=${partnerName}`} 
-                className="w-32 h-32 rounded-full border-4 border-gray-800 bg-gray-700 relative z-10 shadow-xl" 
-            />
+            <img src={`https://api.dicebear.com/9.x/notionists/svg?seed=${partnerName}`} className="w-32 h-32 rounded-full border-4 border-gray-800 bg-gray-700 relative z-10" />
         </div>
-
-        <h2 className="text-2xl font-bold mb-1 tracking-wide">{partnerName}</h2>
-        <p className="text-green-400 animate-pulse text-sm mb-12 font-medium">Memanggil...</p>
-
-        {/* Tombol Kontrol Telepon */}
+        <h2 className="text-2xl font-bold mb-1">{partnerName}</h2>
+        <p className="text-green-400 animate-pulse text-sm mb-12">Memanggil...</p>
         <div className="flex gap-8 z-10">
-            <button className="p-4 rounded-full bg-gray-800 hover:bg-gray-700 transition text-gray-300">
-                🎤
-            </button>
-            
-            <button 
-                onClick={() => setIsCalling(false)} 
-                className="p-5 rounded-full bg-red-500 hover:bg-red-600 transition shadow-lg shadow-red-500/50 transform hover:scale-110"
-            >
-                📞 <span className="sr-only">End Call</span>
-            </button>
-            
-            <button className="p-4 rounded-full bg-gray-800 hover:bg-gray-700 transition text-gray-300">
-                🔊
-            </button>
+            <button className="p-4 rounded-full bg-gray-800 text-gray-300">🎤</button>
+            <button onClick={() => setIsCalling(false)} className="p-5 rounded-full bg-red-500 hover:bg-red-600 transition shadow-lg shadow-red-500/50 transform hover:scale-110">📞</button>
+            <button className="p-4 rounded-full bg-gray-800 text-gray-300">🔊</button>
         </div>
       </div>
     );
   }
 
-  // --- TAMPILAN UTAMA CHAT ---
+  // --- TAMPILAN UTAMA ---
   return (
     <div className="bg-white rounded-3xl shadow-sm border border-gray-100 flex flex-col h-[600px] overflow-hidden">
-      {/* Header Chat */}
       <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-white sticky top-0 z-10 shadow-sm">
         <div className="flex items-center gap-3">
             <button onClick={onBack} className="text-gray-400 hover:text-green-600 font-bold p-2 hover:bg-gray-50 rounded-full transition">⬅</button>
@@ -134,23 +126,12 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
                 <p className="text-[10px] text-gray-400">{isOnline ? "Online" : "Offline"}</p>
             </div>
         </div>
-
-        {/* Tombol Telepon & Menu */}
         <div className="flex gap-2">
-            <button 
-                onClick={() => setIsCalling(true)} 
-                className="w-10 h-10 flex items-center justify-center rounded-full bg-green-50 text-green-600 hover:bg-green-500 hover:text-white transition shadow-sm"
-                title="Panggilan Suara"
-            >
-                📞
-            </button>
-            <button className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-400 hover:bg-gray-100 transition">
-                ⋮
-            </button>
+            <button onClick={() => setIsCalling(true)} className="w-10 h-10 flex items-center justify-center rounded-full bg-green-50 text-green-600 hover:bg-green-500 hover:text-white transition shadow-sm">📞</button>
+            <button className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-400 hover:bg-gray-100 transition">⋮</button>
         </div>
       </div>
 
-      {/* Area Chat */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/30">
         {messages.map((msg, idx) => {
             const isMe = msg.sender === myName;
@@ -168,17 +149,9 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Chat */}
       <form onSubmit={sendMessage} className="p-3 bg-white border-t border-gray-100 flex gap-2">
-        <input 
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            className="flex-1 bg-gray-100 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-100 transition"
-            placeholder={`Kirim pesan ke @${partnerName}...`}
-        />
-        <button type="submit" disabled={!newMessage.trim()} className="bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white p-3 rounded-xl transition shadow-lg shadow-green-200">
-            ➤
-        </button>
+        <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="flex-1 bg-gray-100 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-100 transition" placeholder={`Kirim pesan ke @${partnerName}...`}/>
+        <button type="submit" disabled={!newMessage.trim()} className="bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white p-3 rounded-xl transition shadow-lg shadow-green-200">➤</button>
       </form>
     </div>
   );
