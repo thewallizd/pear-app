@@ -1,30 +1,18 @@
 "use client";
-import { useState, useRef } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import Modal from "@/components/Modal"; // <--- IMPORT MODAL
+import { useState, useRef } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
 export default function CreatePost({ myName }) {
-  const [content, setContent] = useState('');
-  const [title, setTitle] = useState('');
-  const [type, setType] = useState('thought'); 
-  const [isPosting, setIsPosting] = useState(false);
-  
-  const [isAnonymous, setIsAnonymous] = useState(false); 
+  const [content, setContent] = useState("");
   const [imageFile, setImageFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
-  const [rating, setRating] = useState(0); 
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef(null);
 
-  // STATE MODAL
-  const [modal, setModal] = useState({ isOpen: false, title: "", message: "", type: "success" });
-
-  const handleFileChange = (e) => {
+  const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        setModal({ isOpen: true, title: "File Kebesaran!", message: "Ukuran maksimal gambar cuma 2MB ya.", type: "error" });
-        return;
-      }
+      if (file.size > 2 * 1024 * 1024) return alert("File terlalu besar! Maksimal 2MB.");
       setImageFile(file);
       setPreviewUrl(URL.createObjectURL(file));
     }
@@ -33,91 +21,101 @@ export default function CreatePost({ myName }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!content.trim() && !imageFile) return;
+    setIsSubmitting(true);
 
-    setIsPosting(true);
-    const authorName = (myName && myName.trim() !== "") ? myName : 'Anonim'; 
-    let uploadedImageUrl = null;
+    let finalImageUrl = null;
 
+    // 1. Upload Gambar ke Supabase Storage (Jika ada)
     if (imageFile) {
-      const fileName = `${Date.now()}-${authorName}-${imageFile.name}`;
-      const { error: uploadError } = await supabase.storage.from('post-images').upload(fileName, imageFile);
-      if (uploadError) { 
-        setModal({ isOpen: true, title: "Gagal Upload", message: "Gambar gagal diupload.", type: "error" });
-        setIsPosting(false); 
-        return; 
-      }
-      const { data: publicData } = supabase.storage.from('post-images').getPublicUrl(fileName);
-      uploadedImageUrl = publicData.publicUrl;
+        const fileName = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const { data, error } = await supabase.storage.from('uploads').upload(fileName, imageFile);
+        
+        if (error) {
+            console.error("Upload error:", error);
+            alert("Gagal upload gambar, coba lagi.");
+            setIsSubmitting(false);
+            return;
+        }
+        
+        // Dapatkan Public URL
+        const { data: publicUrlData } = supabase.storage.from('uploads').getPublicUrl(fileName);
+        finalImageUrl = publicUrlData.publicUrl;
     }
 
-    const { error } = await supabase.from('posts').insert([{ 
-      title: type === 'thought' ? null : title,
-      content, 
-      type,
-      votes: 0,
-      author: authorName,
-      image_url: uploadedImageUrl,
-      rating: type === 'review' ? rating : 0,
-      is_pinned: false,
-      is_anonymous: isAnonymous
-    }]);
+    // 2. Simpan Postingan ke Database
+    const { error } = await supabase.from("posts").insert([
+      { 
+        content, 
+        author: myName, 
+        image_url: finalImageUrl, // Kolom baru (pastikan tabel posts punya kolom image_url text)
+        votes: 0 
+      },
+    ]);
 
-    if (!error) {
-      // SUKSES POSTING
-      setModal({ isOpen: true, title: "Terkirim! 🚀", message: "Postinganmu sudah mendarat di linimasa.", type: "success" });
-      setContent(''); setTitle(''); setType('thought'); setImageFile(null); setPreviewUrl(null); setRating(0); setIsAnonymous(false);
+    if (error) {
+      alert("Gagal memposting!");
     } else {
-      setModal({ isOpen: true, title: "Gagal Posting", message: "Cek koneksi internetmu.", type: "error" });
+      setContent("");
+      setImageFile(null);
+      setPreviewUrl(null);
+      // Reset input file
+      if(fileInputRef.current) fileInputRef.current.value = "";
     }
-    setIsPosting(false);
+    setIsSubmitting(false);
   };
 
   return (
-    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 transition-all">
-      <Modal isOpen={modal.isOpen} onClose={() => setModal({...modal, isOpen: false})} title={modal.title} message={modal.message} type={modal.type} />
-
-      <div className="flex gap-2 mb-3 overflow-x-auto pb-1 no-scrollbar">
-        {[
-          { id: 'thought', label: '💭 Nyeletuk', color: 'bg-gray-100 text-gray-600' },
-          { id: 'review', label: '⭐ Review', color: 'bg-green-100 text-green-700' }, 
-          { id: 'discussion', label: '☕ Deep Talk', color: 'bg-orange-100 text-orange-700' },
-          { id: 'question', label: '☝️ Tanya', color: 'bg-blue-100 text-blue-700' }
-        ].map((t) => (
-          <button key={t.id} onClick={() => setType(t.id)} className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all ${type === t.id ? 'bg-green-600 text-white shadow-md transform scale-105' : `${t.color} hover:opacity-80`}`}>{t.label}</button>
-        ))}
-      </div>
-
+    <div className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 mb-6 transition-all focus-within:ring-2 focus-within:ring-green-100">
       <form onSubmit={handleSubmit}>
-        {type !== 'thought' && (
-          <input type="text" placeholder={type === 'review' ? "Apa yang mau di-review?" : "Topik bahasannya apa?"} className="w-full mb-2 p-2 text-sm font-bold border-b border-gray-100 focus:outline-none focus:border-green-500 bg-transparent" value={title} onChange={(e) => setTitle(e.target.value)} />
-        )}
-        {type === 'review' && (
-          <div className="flex gap-1 mb-2 animate-in slide-in-from-left-2">
-            {[1, 2, 3, 4, 5].map((star) => (
-              <button key={star} type="button" onClick={() => setRating(star)} className={`text-2xl transition hover:scale-125 ${star <= rating ? 'text-yellow-400' : 'text-gray-200'}`}>★</button>
-            ))}
-            <span className="text-xs text-gray-400 self-center ml-2">({rating}/5)</span>
-          </div>
-        )}
-        <textarea className="w-full p-2 text-sm bg-transparent focus:outline-none resize-none placeholder-gray-400" rows="3" placeholder={`Apa yang sedang kamu pikirkan, ${myName || 'Kawan'}?`} value={content} onChange={(e) => setContent(e.target.value)} />
+        <textarea
+          className="w-full bg-transparent p-2 outline-none text-gray-700 placeholder-gray-400 resize-none"
+          rows="3"
+          placeholder={`Apa yang sedang terjadi, @${myName}?`}
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+        />
+        
+        {/* Preview Gambar */}
         {previewUrl && (
-          <div className="relative mt-2 mb-2 w-fit">
-            <img src={previewUrl} className="max-h-40 rounded-lg border border-gray-200" />
-            <button type="button" onClick={() => { setImageFile(null); setPreviewUrl(null); }} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600">✖</button>
-          </div>
+            <div className="relative mt-2 mb-4">
+                <img src={previewUrl} className="w-full max-h-60 object-cover rounded-xl border border-gray-200" />
+                <button 
+                    type="button"
+                    onClick={() => { setImageFile(null); setPreviewUrl(null); }}
+                    className="absolute top-2 right-2 bg-gray-900/50 text-white rounded-full p-1 hover:bg-red-500 transition"
+                >
+                    ✕
+                </button>
+            </div>
         )}
-        <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-50">
-          <div className="flex items-center gap-3">
-            <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
-            <button type="button" onClick={() => fileInputRef.current.click()} className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-full transition">🖼️</button>
-            <button type="button" onClick={() => setIsAnonymous(!isAnonymous)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition border ${isAnonymous ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
-              {isAnonymous ? '🥷 Mode Hantu' : '👤 Tampilkan Nama'}
+
+        <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-50">
+          <div className="flex gap-2">
+            {/* Tombol Upload Hidden */}
+            <input 
+                type="file" 
+                ref={fileInputRef}
+                accept="image/*" 
+                onChange={handleImageChange} 
+                className="hidden" 
+            />
+            <button 
+                type="button" 
+                onClick={() => fileInputRef.current?.click()}
+                className="text-green-500 hover:bg-green-50 p-2 rounded-full transition" 
+                title="Tambah Foto"
+            >
+              📷
             </button>
+            <button type="button" className="text-gray-400 hover:bg-gray-50 p-2 rounded-full transition cursor-not-allowed">📍</button>
           </div>
-          <div className="flex items-center gap-2">
-             <span className="text-[10px] text-gray-400 hidden md:inline">Posting sbg: <span className="font-bold text-green-600">@{myName || 'LOADING...'}</span></span>
-             <button disabled={isPosting || (!content.trim() && !imageFile)} className="bg-green-600 text-white px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-green-700 transition disabled:opacity-50">{isPosting ? '...' : 'Post 🚀'}</button>
-          </div>
+          
+          <button
+            disabled={isSubmitting || (!content && !imageFile)}
+            className="bg-green-500 text-white px-6 py-2 rounded-xl font-bold hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg shadow-green-200"
+          >
+            {isSubmitting ? "Mengirim..." : "Post 🚀"}
+          </button>
         </div>
       </form>
     </div>

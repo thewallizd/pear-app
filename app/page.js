@@ -16,7 +16,26 @@ import FriendsList from "@/components/FriendsList";
 import GroupChat from "@/components/GroupChat"; 
 import Onboarding from "@/components/Onboarding"; 
 import FeedbackForum from "@/components/FeedbackForum";
-import Spaces from "@/components/Spaces"; // <--- IMPORT BARU
+import Spaces from "@/components/Spaces"; 
+
+// --- KOMPONEN SKELETON LOADING (Biar Pro) ---
+const SkeletonPost = () => (
+  <div className="bg-white p-5 rounded-3xl border border-gray-100 mb-4 animate-pulse">
+    <div className="flex gap-3 mb-4">
+      <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
+      <div className="flex-1 space-y-2 py-1">
+          <div className="h-3 bg-gray-200 rounded w-1/3"></div>
+          <div className="h-2 bg-gray-200 rounded w-1/4"></div>
+      </div>
+    </div>
+    <div className="space-y-2">
+      <div className="h-3 bg-gray-200 rounded w-full"></div>
+      <div className="h-3 bg-gray-200 rounded w-5/6"></div>
+      <div className="h-3 bg-gray-200 rounded w-4/6"></div>
+    </div>
+  </div>
+);
+// ---------------------------------------------
 
 export default function Home() {
   const [posts, setPosts] = useState([]);
@@ -130,16 +149,9 @@ export default function Home() {
           </button>
           
           <button onClick={() => setActiveTab("Friends")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Friends" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Friends 👥</button>
-          
-          {/* MENU BARU: SPACE */}
           <button onClick={() => setActiveTab("Space")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Space" ? "bg-purple-50 text-purple-700 font-bold border border-purple-100" : "text-gray-700 hover:bg-white"}`}>Space 🎙️</button>
-
           <button onClick={() => setActiveTab("Chat 💬")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Chat 💬" || activeTab === "Private" || activeTab === "GlobalChat" || activeTab === "GroupChat" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Chat 💬</button>
-          
-          <button onClick={() => setActiveTab("Feedback")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Feedback" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>
-             Saran & Keluhan 📢
-          </button>
-
+          <button onClick={() => setActiveTab("Feedback")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Feedback" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Saran & Keluhan 📢</button>
           <button onClick={() => setActiveTab("Leaderboard")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Leaderboard" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Klasemen 🏆</button>
           <button onClick={handleOpenNotif} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium justify-between ${activeTab === "Notifications" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}><span>Notifications</span>{unreadCount > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-bounce">{unreadCount}</span>}</button>
           <button onClick={() => setActiveTab("Profile")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Profile" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Profile</button>
@@ -158,7 +170,6 @@ export default function Home() {
 
           {/* RENDER PAGES */}
           {activeTab === "Space" && <Spaces myName={myName} onVisitProfile={handleVisitProfile} />}
-
           {activeTab === "Feedback" && <FeedbackForum myName={myName} />}
           {activeTab === "Friends" && <FriendsList myName={myName} onlineUsers={onlineUsers} onVisitProfile={handleVisitProfile} onChat={startPrivateChat} />}
           {activeTab === "UserProfile" && viewProfileUser && <UserProfile targetUsername={viewProfileUser} myName={myName} onBack={() => setActiveTab("Home")} onChat={startPrivateChat} />}
@@ -194,10 +205,13 @@ export default function Home() {
               {!isSearching && <CreatePost myName={myName} />}
               
               <div className="space-y-4">
+                {/* --- MENGGUNAKAN SKELETON LOADING YANG BARU --- */}
                 {loading && posts.length === 0 ? (
-                    <div className="animate-pulse space-y-4">
-                        {[1,2].map(i => <div key={i} className="h-40 bg-gray-200 rounded-2xl"></div>)}
-                    </div>
+                    <>
+                       <SkeletonPost />
+                       <SkeletonPost />
+                       <SkeletonPost />
+                    </>
                 ) : posts.length === 0 ? (
                     <div className="text-center py-16 text-gray-400 bg-white rounded-3xl border border-dashed border-gray-200">
                         <div className="text-4xl mb-2">📭</div>
