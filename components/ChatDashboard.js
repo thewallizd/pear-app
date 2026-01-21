@@ -1,135 +1,159 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import Modal from "@/components/Modal";
 
 export default function ChatDashboard({ myName, onSelectChat, onOpenGlobal, onSelectGroup, onlineUsers }) {
-  const [friends, setFriends] = useState([]);
+  const [activeTab, setActiveTab] = useState("Private"); // Private | Groups
+  const [conversations, setConversations] = useState([]);
   const [groups, setGroups] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Modal Buat Grup
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
-  const [newGroupDesc, setNewGroupDesc] = useState("");
 
-  const fetchData = async () => {
-    // 1. Ambil User (Teman)
-    const { data: userData } = await supabase.from("users").select("username").neq("username", myName);
-    if (userData) setFriends(userData);
+  // --- LOGIC NOTIFIKASI ALA WHATSAPP ---
+  useEffect(() => {
+    // 1. Minta Izin Notifikasi Browser
+    if ("Notification" in window && Notification.permission !== "granted") {
+        Notification.requestPermission();
+    }
 
-    // 2. Ambil Grup
-    const { data: groupData } = await supabase.from("groups").select("*").order("created_at", { ascending: false });
-    if (groupData) setGroups(groupData);
+    // 2. Setup Suara Notifikasi (Menggunakan file MP3 pendek)
+    const notificationSound = new Audio("https://cdn.freesound.org/previews/536/536108_11306637-lq.mp3"); // Sound 'Ting' sederhana
 
-    setLoading(false);
-  };
+    // 3. Listener Global untuk Pesan Masuk (Private)
+    const msgChannel = supabase.channel("global_messages_listener")
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
+            if (payload.new.recipient === myName) {
+                // Mainkan Suara
+                notificationSound.play().catch(e => console.log("Audio play blocked", e));
+                
+                // Getar HP (Jika di Android)
+                if (navigator.vibrate) navigator.vibrate(200);
+
+                // Tampilkan Notifikasi Popup Browser
+                if (Notification.permission === "granted" && document.hidden) {
+                    new Notification(`Pesan baru dari @${payload.new.sender}`, {
+                        body: payload.new.content,
+                        icon: "/icon.png" // Pastikan ada icon.png di folder public
+                    });
+                }
+                
+                // Refresh list chat
+                fetchConversations();
+            }
+        })
+        .subscribe();
+
+    return () => supabase.removeChannel(msgChannel);
+  }, [myName]);
+  // -------------------------------------
 
   useEffect(() => {
-    fetchData();
+    fetchConversations();
+    fetchGroups();
   }, [myName]);
 
-  const handleCreateGroup = async () => {
-    if (!newGroupName.trim()) return alert("Nama grup wajib diisi!");
+  const fetchConversations = async () => {
+    // Logic mengambil list chat (disederhanakan: ambil semua pesan yg melibatkan saya, lalu group by sender)
+    const { data } = await supabase.from("messages")
+      .select("*").or(`sender.eq.${myName},recipient.eq.${myName}`).order("created_at", { ascending: false });
     
-    const { error } = await supabase.from("groups").insert([{
-      name: newGroupName,
-      description: newGroupDesc || "Grup komunitas seru",
-      created_by: myName,
-      avatar_seed: newGroupName.replace(/\s/g, '') // Seed avatar dari nama grup
-    }]);
-
-    if (!error) {
-      setShowCreateModal(false);
-      setNewGroupName("");
-      setNewGroupDesc("");
-      fetchData(); // Refresh list
-      alert("Grup berhasil dibuat! 🎉");
-    } else {
-      alert("Gagal membuat grup.");
+    if (data) {
+        const uniqueUsers = new Set();
+        const chatList = [];
+        data.forEach(msg => {
+            const other = msg.sender === myName ? msg.recipient : msg.sender;
+            if (!uniqueUsers.has(other)) {
+                uniqueUsers.add(other);
+                chatList.push({ user: other, lastMsg: msg.content, time: msg.created_at, unread: !msg.is_read && msg.recipient === myName });
+            }
+        });
+        setConversations(chatList);
     }
   };
 
+  const fetchGroups = async () => {
+    const { data } = await supabase.from("groups").select("*").eq("is_active", true);
+    if (data) setGroups(data);
+  };
+
+  const createGroup = async () => {
+      if(!newGroupName.trim()) return;
+      const { data, error } = await supabase.from("groups").insert([{ name: newGroupName, admin: myName, is_active: true }]).select();
+      if(data) {
+          setGroups([data[0], ...groups]);
+          setIsCreatingGroup(false);
+          setNewGroupName("");
+      }
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 animate-in slide-in-from-bottom-2">
       
-      {/* GLOBAL CHAT CARD */}
-      <div 
-        onClick={onOpenGlobal}
-        className="bg-gradient-to-r from-green-500 to-emerald-600 p-4 rounded-2xl shadow-md cursor-pointer hover:shadow-lg transition transform hover:-translate-y-1 relative overflow-hidden group"
-      >
-        <div className="absolute right-0 top-0 opacity-10 text-6xl group-hover:scale-110 transition">🌍</div>
-        <h3 className="text-white font-bold text-lg flex items-center gap-2">Global Chat 💬</h3>
-        <p className="text-green-100 text-xs">Ngobrol bareng semua warga Pear</p>
+      {/* Header Tab */}
+      <div className="flex bg-white p-1 rounded-2xl border border-gray-200 shadow-sm">
+        <button onClick={() => setActiveTab("Private")} className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${activeTab === "Private" ? "bg-green-100 text-green-700" : "text-gray-500 hover:bg-gray-50"}`}>Pribadi 📩</button>
+        <button onClick={() => setActiveTab("Groups")} className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${activeTab === "Groups" ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:bg-gray-50"}`}>Grup 👥</button>
       </div>
 
-      {/* --- SEKSI GRUP KOMUNITAS --- */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-           <h3 className="font-bold text-gray-700 text-sm">Grup Komunitas</h3>
-           <button onClick={() => setShowCreateModal(true)} className="text-[10px] bg-blue-50 text-blue-600 font-bold px-2 py-1 rounded-lg hover:bg-blue-100 transition">+ Buat Grup</button>
+      {/* Global Chat Banner */}
+      <div onClick={onOpenGlobal} className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 p-4 rounded-2xl text-white shadow-lg cursor-pointer transform hover:scale-[1.02] transition relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-4 opacity-20 text-6xl group-hover:rotate-12 transition">🌍</div>
+        <h3 className="font-black text-lg">Global Chat Semesta</h3>
+        <p className="text-xs opacity-90">Nongkrong bareng seluruh warga Pear.</p>
+      </div>
+
+      {/* --- TAB PRIVATE CHAT --- */}
+      {activeTab === "Private" && (
+        <div className="space-y-2">
+            {conversations.length === 0 ? (
+                <div className="text-center py-8 text-gray-400 text-xs">Belum ada chat pribadi.</div>
+            ) : (
+                conversations.map((chat) => (
+                    <div key={chat.user} onClick={() => onSelectChat(chat.user)} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center gap-4 hover:bg-gray-50 cursor-pointer transition shadow-sm">
+                        <div className="relative">
+                            <img src={`https://api.dicebear.com/9.x/notionists/svg?seed=${chat.user}`} className="w-12 h-12 rounded-full border border-gray-200"/>
+                            {onlineUsers.has(chat.user) && <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-baseline">
+                                <h4 className="font-bold text-gray-800 text-sm">@{chat.user}</h4>
+                                <span className="text-[10px] text-gray-400">{new Date(chat.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                            </div>
+                            <p className={`text-xs truncate mt-0.5 ${chat.unread ? "font-bold text-black" : "text-gray-500"}`}>{chat.lastMsg}</p>
+                        </div>
+                        {chat.unread && <div className="w-2 h-2 bg-red-500 rounded-full"></div>}
+                    </div>
+                ))
+            )}
         </div>
-
-        <div className="grid grid-cols-1 gap-2">
-            {groups.length === 0 ? <div className="text-gray-400 text-xs italic">Belum ada grup. Bikin dong!</div> : 
-             groups.map(group => (
-               <div key={group.id} onClick={() => onSelectGroup(group)} className="bg-white p-3 rounded-xl border border-gray-100 flex items-center gap-3 cursor-pointer hover:bg-blue-50 hover:border-blue-200 transition">
-                  <img src={`https://api.dicebear.com/9.x/initials/svg?seed=${group.avatar_seed}&backgroundColor=b6e3f4`} className="w-10 h-10 rounded-xl bg-gray-100"/>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-bold text-sm text-gray-800 truncate">{group.name}</h4>
-                    <p className="text-[10px] text-gray-500 truncate">{group.description}</p>
-                  </div>
-                  <span className="text-gray-300">➜</span>
-               </div>
-             ))
-            }
-        </div>
-      </div>
-
-      {/* --- SEKSI WARGA (TEMAN) --- */}
-      <div>
-        <h3 className="font-bold text-gray-700 text-sm mb-2">Warga Lainnya</h3>
-        {loading ? (
-            <div className="text-center text-gray-400 py-10">Loading warga...</div>
-        ) : (
-            <div className="space-y-2">
-            {friends.map((friend) => {
-                const isOnline = onlineUsers && onlineUsers.has(friend.username);
-                return (
-                <div key={friend.username} onClick={() => onSelectChat(friend.username)} className="bg-white p-3 rounded-xl border border-gray-100 flex items-center justify-between cursor-pointer hover:bg-green-50 hover:border-green-200 transition group">
-                    <div className="flex items-center gap-3">
-                    <div className="relative">
-                        <img src={`https://api.dicebear.com/9.x/notionists/svg?seed=${friend.username}&radius=50`} className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200"/>
-                        {isOnline && <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full animate-pulse"></div>}
-                    </div>
-                    <div>
-                        <h4 className="font-bold text-sm text-gray-800">@{friend.username}</h4>
-                        <p className={`text-[10px] ${isOnline ? 'text-green-600 font-bold' : 'text-gray-400'}`}>{isOnline ? 'Sedang Online' : 'Offline'}</p>
-                    </div>
-                    </div>
-                    <span className="text-gray-300 group-hover:text-green-600 transition">💬</span>
-                </div>
-                );
-            })}
-            </div>
-        )}
-      </div>
-
-      {/* --- MODAL BUAT GRUP MANUAL (SEDERHANA) --- */}
-      {showCreateModal && (
-         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 animate-in zoom-in-95">
-               <h3 className="text-lg font-bold text-gray-800 mb-4">Buat Grup Baru ✨</h3>
-               <input type="text" placeholder="Nama Grup (Wajib)" className="w-full mb-3 p-2 rounded-lg border text-sm" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} />
-               <input type="text" placeholder="Deskripsi Singkat" className="w-full mb-4 p-2 rounded-lg border text-sm" value={newGroupDesc} onChange={e => setNewGroupDesc(e.target.value)} />
-               <div className="flex justify-end gap-2">
-                  <button onClick={() => setShowCreateModal(false)} className="px-4 py-2 text-xs font-bold text-gray-500 hover:bg-gray-100 rounded-lg">Batal</button>
-                  <button onClick={handleCreateGroup} className="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700">Buat Grup</button>
-               </div>
-            </div>
-         </div>
       )}
 
+      {/* --- TAB GROUP CHAT --- */}
+      {activeTab === "Groups" && (
+          <div className="space-y-3">
+              <button onClick={() => setIsCreatingGroup(!isCreatingGroup)} className="w-full py-3 border-2 border-dashed border-gray-300 rounded-2xl text-gray-400 font-bold hover:border-blue-400 hover:text-blue-500 transition text-sm">
+                  {isCreatingGroup ? "Batal" : "+ Buat Grup Baru"}
+              </button>
+              
+              {isCreatingGroup && (
+                  <div className="flex gap-2 animate-in fade-in">
+                      <input value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} className="flex-1 border rounded-xl px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="Nama Grup..." />
+                      <button onClick={createGroup} className="bg-blue-500 text-white px-4 rounded-xl font-bold text-sm">Buat</button>
+                  </div>
+              )}
+
+              {groups.map(g => (
+                  <div key={g.id} onClick={() => onSelectGroup(g)} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center gap-3 hover:bg-gray-50 cursor-pointer transition">
+                      <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">#</div>
+                      <div className="flex-1">
+                          <h4 className="font-bold text-gray-800 text-sm">{g.name}</h4>
+                          <p className="text-[10px] text-gray-400">Dibuat oleh @{g.admin}</p>
+                      </div>
+                      <span className="text-gray-300">➤</span>
+                  </div>
+              ))}
+          </div>
+      )}
     </div>
   );
 }

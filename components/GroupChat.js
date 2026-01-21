@@ -1,90 +1,125 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import TimeAgo from "@/components/TimeAgo";
 
 export default function GroupChat({ myName, group, onBack, onVisitProfile }) {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const messagesEndRef = useRef(null);
+  
+  // Cek apakah aku admin grup ini (asumsi kolom 'admin' atau 'created_by' ada di tabel groups)
+  // Kita pakai logic: Jika namaku sama dengan pembuat grup
+  const isAdmin = group.admin === myName || group.created_by === myName; 
 
   useEffect(() => {
+    // 1. Load Chat History
     const fetchMessages = async () => {
-      const { data } = await supabase.from("group_chat").select("*").eq("group_id", group.id).order("created_at", { ascending: true });
+      const { data } = await supabase.from("group_messages").select("*").eq("group_id", group.id).order("created_at", { ascending: true });
       if (data) setMessages(data);
     };
     fetchMessages();
 
-    // LISTEN ALL EVENTS (*) untuk menangkap DELETE
-    const channel = supabase.channel(`group_${group.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "group_chat", filter: `group_id=eq.${group.id}` }, (payload) => {
-        if (payload.eventType === "INSERT") {
-           setMessages((prev) => [...prev, payload.new]);
-        } else if (payload.eventType === "DELETE") {
-           setMessages((prev) => prev.filter(m => m.id !== payload.old.id));
-        }
+    // 2. Realtime Listener
+    const channel = supabase.channel(`group:${group.id}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "group_messages", filter: `group_id=eq.${group.id}` }, (payload) => {
+        setMessages((prev) => [...prev, payload.new]);
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => supabase.removeChannel(channel);
   }, [group.id]);
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
-  const handleSendMessage = async (e) => {
-    e.preventDefault(); if (!newMessage.trim()) return;
-    await supabase.from("group_chat").insert([{ group_id: group.id, sender: myName, message: newMessage }]);
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    if (!newMessage.trim()) return;
+
+    // Optimistic Update
+    const tempMsg = { id: Math.random(), group_id: group.id, sender: myName, content: newMessage, created_at: new Date().toISOString() };
+    setMessages((prev) => [...prev, tempMsg]);
     setNewMessage("");
+
+    await supabase.from("group_messages").insert([{ group_id: group.id, sender: myName, content: tempMsg.content }]);
   };
 
-  const handleDeleteMessage = async (msgId) => {
-    if (confirm("Hapus pesan grup ini?")) {
-      await supabase.from("group_chat").delete().eq("id", msgId);
+  // --- FITUR BARU: HAPUS GRUP ---
+  const handleDeleteGroup = async () => {
+    if (confirm("Yakin mau bubarkan grup ini selamanya? Semua chat akan hilang!")) {
+        const { error } = await supabase.from("groups").delete().eq("id", group.id);
+        if (error) {
+            alert("Gagal menghapus grup: " + error.message);
+        } else {
+            alert("Grup berhasil dibubarkan.");
+            onBack(); // Kembali ke dashboard
+        }
     }
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-140px)] bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden animate-in slide-in-from-right duration-300">
-      <div className="bg-white p-4 border-b border-gray-100 flex items-center gap-3 shadow-sm z-10">
-        <button onClick={onBack} className="text-gray-400 hover:text-green-600 transition">⬅</button>
-        <img src={`https://api.dicebear.com/9.x/initials/svg?seed=${group.avatar_seed}&backgroundColor=b6e3f4`} className="w-10 h-10 rounded-xl bg-gray-100 border border-gray-200"/>
-        <div>
-          <h2 className="font-bold text-gray-800 text-sm">{group.name}</h2>
-          <p className="text-[10px] text-gray-500 truncate max-w-[200px]">{group.description}</p>
+    <div className="bg-white rounded-3xl shadow-sm border border-gray-100 flex flex-col h-[600px] overflow-hidden">
+      {/* Header Group */}
+      <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+        <div className="flex items-center gap-3">
+            <button onClick={onBack} className="text-gray-400 hover:text-green-600 font-bold">⬅</button>
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-400 to-blue-500 flex items-center justify-center text-white font-bold text-lg">
+                {group.name.charAt(0).toUpperCase()}
+            </div>
+            <div>
+                <h3 className="font-bold text-gray-800 text-sm">{group.name}</h3>
+                <p className="text-[10px] text-gray-400">{group.description || "Grup Warga"}</p>
+            </div>
         </div>
+
+        {/* Tombol Hapus Grup (Hanya untuk Admin) */}
+        {isAdmin && (
+            <button 
+                onClick={handleDeleteGroup}
+                className="bg-red-50 text-red-500 p-2 rounded-xl text-xs font-bold hover:bg-red-500 hover:text-white transition flex items-center gap-1"
+                title="Bubarkan Grup"
+            >
+                🗑️ Bubarkan
+            </button>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50">
-        {messages.map((msg) => {
-          const isMe = msg.sender === myName;
-          return (
-            <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"} group/msg`}>
-               {!isMe && <span className="text-[10px] text-gray-400 ml-1 mb-0.5 cursor-pointer hover:underline" onClick={() => onVisitProfile(msg.sender)}>@{msg.sender}</span>}
-               
-               <div className="flex items-center gap-2">
-                  {isMe && (
-                   <button 
-                     onClick={() => handleDeleteMessage(msg.id)} 
-                     className="text-[10px] text-gray-300 hover:text-red-500 opacity-0 group-hover/msg:opacity-100 transition"
-                     title="Hapus"
-                   >
-                     🗑️
-                   </button>
-                 )}
-                 <div className={`p-3 rounded-2xl text-sm shadow-sm max-w-[75%] ${isMe ? "bg-blue-600 text-white rounded-tr-none" : "bg-white text-gray-800 border border-gray-100 rounded-tl-none"}`}>
-                  {msg.message}
-                 </div>
-               </div>
-              <span className="text-[9px] text-gray-400 mt-1 font-medium mx-1"><TimeAgo timestamp={msg.created_at} /></span>
-            </div>
-          );
+      {/* Area Chat */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-white">
+        {messages.map((msg, idx) => {
+            const isMe = msg.sender === myName;
+            return (
+                <div key={idx} className={`flex gap-2 ${isMe ? "flex-row-reverse" : "flex-row"}`}>
+                    {!isMe && (
+                        <img 
+                            onClick={() => onVisitProfile(msg.sender)}
+                            src={`https://api.dicebear.com/9.x/notionists/svg?seed=${msg.sender}`} 
+                            className="w-8 h-8 rounded-full border border-gray-100 cursor-pointer"
+                        />
+                    )}
+                    <div className={`max-w-[70%] px-4 py-2 rounded-2xl text-sm ${isMe ? "bg-green-500 text-white rounded-tr-none" : "bg-gray-100 text-gray-800 rounded-tl-none"}`}>
+                        {!isMe && <p className="text-[10px] font-bold text-gray-500 mb-0.5">{msg.sender}</p>}
+                        {msg.content}
+                        <p className={`text-[9px] text-right mt-1 ${isMe ? "text-green-100" : "text-gray-400"}`}>
+                            {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </p>
+                    </div>
+                </div>
+            );
         })}
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleSendMessage} className="p-3 bg-white border-t border-gray-100 flex gap-2">
-        <input type="text" className="flex-1 p-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-500 bg-gray-50 focus:bg-white transition" placeholder={`Kirim ke ${group.name}...`} value={newMessage} onChange={(e) => setNewMessage(e.target.value)} />
-        <button disabled={!newMessage.trim()} className="bg-blue-600 text-white px-4 rounded-xl font-bold hover:bg-blue-700 transition disabled:opacity-50">➤</button>
+      {/* Input */}
+      <form onSubmit={sendMessage} className="p-3 bg-white border-t border-gray-100 flex gap-2">
+        <input 
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            className="flex-1 bg-gray-100 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-100"
+            placeholder={`Kirim ke grup ${group.name}...`}
+        />
+        <button className="bg-green-500 text-white p-3 rounded-xl hover:bg-green-600 transition font-bold">🚀</button>
       </form>
     </div>
   );
