@@ -8,7 +8,7 @@ import CreatePost from "@/components/CreatePost";
 import PostCard from "@/components/PostCard";
 import ProfileDashboard from "@/components/ProfileDashboard";
 import Leaderboard from "@/components/Leaderboard";
-import FriendList from "@/components/FriendList";
+import FriendList from "@/components/BukuWarga";
 import NotificationList from "@/components/NotificationList";
 import ChatDashboard from "@/components/ChatDashboard";
 import PrivateChat from "@/components/PrivateChat";
