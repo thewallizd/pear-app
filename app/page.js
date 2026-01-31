@@ -19,36 +19,32 @@ import UserProfile from "@/components/UserProfile";
 
 export default function Home() {
   const [myName, setMyName] = useState("");
-  const [activeTab, setActiveTab] = useState("feed"); // 'feed', 'spaces', 'feedback', 'profile'
-  const [targetProfile, setTargetProfile] = useState(""); // Username profil yang sedang dilihat
+  const [activeTab, setActiveTab] = useState("feed"); // 'feed', 'spaces', 'notifications', 'chat', 'profile', 'feedback', 'leaderboard'
+  const [targetProfile, setTargetProfile] = useState("");
 
-  // State untuk Chat (Sidebar Kanan)
+  // State Chat
   const [chatMode, setChatMode] = useState("dashboard"); // 'dashboard', 'private', 'group'
   const [chatPartner, setChatPartner] = useState(null);
   const [activeGroup, setActiveGroup] = useState(null);
 
-  // State Data Global
   const [posts, setPosts] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
 
-  // 1. Cek Login saat pertama buka
+  // 1. Auth Check
   useEffect(() => {
     const savedUser = localStorage.getItem("pear_username");
     if (savedUser) setMyName(savedUser);
   }, []);
 
-  // 2. Setup Realtime Presence (Cek siapa yang Online)
+  // 2. Realtime Presence & Feed
   useEffect(() => {
     if (!myName) return;
 
-    // Gabung ke channel global 'presence'
-    const channel = supabase.channel("global_presence");
-
-    channel
+    const presenceChannel = supabase.channel("global_presence");
+    presenceChannel
       .on("presence", { event: "sync" }, () => {
-        const newState = channel.presenceState();
+        const newState = presenceChannel.presenceState();
         const users = new Set();
-        // Loop semua user yang connect
         for (let id in newState) {
           newState[id].forEach((u) => users.add(u.username));
         }
@@ -56,30 +52,26 @@ export default function Home() {
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
-          await channel.track({
+          await presenceChannel.track({
             username: myName,
             online_at: new Date().toISOString(),
           });
         }
       });
 
-    // Load Postingan Awal
     fetchPosts();
 
-    // Listener Post Baru
     const postChannel = supabase
       .channel("public:posts_feed")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "posts" },
-        (payload) => {
-          setPosts((prev) => [payload.new, ...prev]);
-        },
+        () => fetchPosts(),
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(presenceChannel);
       supabase.removeChannel(postChannel);
     };
   }, [myName]);
@@ -92,12 +84,10 @@ export default function Home() {
     if (data) setPosts(data);
   };
 
-  // --- HANDLERS ---
-
+  // --- NAVIGATION HANDLERS ---
   const handleLogout = () => {
-    if (confirm("Yakin mau keluar?")) {
-      localStorage.removeItem("pear_username");
-      setMyName("");
+    if (confirm("Yakin ingin logout?")) {
+      localStorage.clear();
       window.location.reload();
     }
   };
@@ -105,191 +95,225 @@ export default function Home() {
   const openProfile = (username) => {
     setTargetProfile(username);
     setActiveTab("profile");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo(0, 0);
   };
 
   const openPrivateChat = (username) => {
     setChatPartner(username);
     setChatMode("private");
+    setActiveTab("chat"); // Di mobile langsung pindah ke tab chat
   };
 
-  const openGroupChat = (group) => {
-    setActiveGroup(group);
-    setChatMode("group");
-  };
+  if (!myName) return <Onboarding onFinish={setMyName} />;
 
-  // --- RENDER UTAMA ---
-
-  // 1. Kalau belum login, tampilkan Onboarding
-  if (!myName) {
-    return <Onboarding onFinish={(name) => setMyName(name)} />;
-  }
-
-  // 2. Kalau sudah login, tampilkan Dashboard Pear
   return (
-    <div className="min-h-screen bg-[#F3F4F6] text-gray-800 font-sans">
-      {/* Container Utama (Max Width 1280px) */}
-      <div className="max-w-7xl mx-auto flex flex-col md:flex-row gap-6 p-4 md:p-6">
-        {/* --- KOLOM KIRI (Sidebar) --- */}
-        <div className="hidden md:flex flex-col w-1/4 gap-6 sticky top-6 h-fit overflow-y-auto max-h-screen no-scrollbar">
-          {/* Widget Profil Saya */}
+    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0">
+      {/* --- HEADER DESKTOP & MOBILE --- */}
+      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-40 p-4">
+        <div className="max-w-7xl mx-auto flex justify-between items-center">
+          <div
+            className="flex items-center gap-2 cursor-pointer"
+            onClick={() => setActiveTab("feed")}
+          >
+            <span className="text-2xl">🍐</span>
+            <h1 className="text-xl font-black bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent">
+              PEAR
+            </h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setActiveTab("feedback")}
+              className="hidden md:block text-xs font-bold text-gray-400 hover:text-orange-500 transition"
+            >
+              💡 Saran
+            </button>
+            <button
+              onClick={handleLogout}
+              className="text-gray-400 hover:text-red-500 transition text-sm"
+            >
+              Logout 🚪
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto flex gap-6 p-4 md:p-6">
+        {/* --- LEFT SIDEBAR (Desktop Only) --- */}
+        <aside className="hidden md:flex flex-col w-1/4 gap-6 sticky top-24 h-fit">
           <ProfileDashboard
             myName={myName}
             onLogout={handleLogout}
             onViewProfile={() => openProfile(myName)}
           />
-
-          {/* Leaderboard */}
           <Leaderboard />
-
-          {/* Friend List (Buku Warga) */}
           <FriendList
             myName={myName}
             onlineUsers={onlineUsers}
             onSelectUser={openPrivateChat}
           />
-        </div>
+        </aside>
 
-        {/* --- KOLOM TENGAH (Main Content) --- */}
-        <div className="flex-1 w-full min-w-0">
-          {/* Tab Navigasi Atas */}
-          <div className="bg-white/80 backdrop-blur-md sticky top-0 z-20 p-2 rounded-2xl mb-6 shadow-sm flex justify-between items-center border border-gray-100">
-            <div className="flex gap-1">
-              <button
-                onClick={() => setActiveTab("feed")}
-                className={`px-6 py-2 rounded-xl font-bold text-sm transition ${activeTab === "feed" ? "bg-green-500 text-white shadow-lg shadow-green-200" : "text-gray-500 hover:bg-gray-100"}`}
-              >
-                🏠 Home
-              </button>
-              <button
-                onClick={() => setActiveTab("spaces")}
-                className={`px-6 py-2 rounded-xl font-bold text-sm transition ${activeTab === "spaces" ? "bg-purple-600 text-white shadow-lg shadow-purple-200" : "text-gray-500 hover:bg-gray-100"}`}
-              >
-                🎙️ Spaces
-              </button>
-              <button
-                onClick={() => setActiveTab("feedback")}
-                className={`px-6 py-2 rounded-xl font-bold text-sm transition ${activeTab === "feedback" ? "bg-orange-500 text-white shadow-lg shadow-orange-200" : "text-gray-500 hover:bg-gray-100"}`}
-              >
-                💡 Saran
-              </button>
-            </div>
-
-            {/* Mobile Logout (Hidden on Desktop) */}
-            <button
-              onClick={handleLogout}
-              className="md:hidden text-gray-400 p-2 text-xl"
-            >
-              🚪
-            </button>
-          </div>
-
-          {/* KONTEN BERDASARKAN TAB */}
-          <div className="min-h-[500px]">
-            {/* 1. Tab Home Feed */}
-            {activeTab === "feed" && (
-              <div className="animate-in fade-in slide-in-from-bottom-4">
-                <CreatePost myName={myName} onPostSuccess={fetchPosts} />
-                <div className="space-y-6">
-                  {posts.length === 0 ? (
-                    <div className="text-center py-20 opacity-50">
-                      <div className="text-4xl animate-bounce">🍐</div>
-                      <p className="mt-4">
-                        Belum ada postingan. Jadilah yang pertama!
-                      </p>
-                    </div>
-                  ) : (
-                    posts.map((post) => (
-                      <PostCard
-                        key={post.id}
-                        {...post}
-                        myName={myName}
-                        onUserClick={openProfile} // Klik avatar -> Buka Profil
-                      />
-                    ))
-                  )}
-                </div>
+        {/* --- MAIN CONTENT (Mobile & Desktop) --- */}
+        <section className="flex-1 min-w-0">
+          {/* CONTENT SWITCHER */}
+          {activeTab === "feed" && (
+            <div className="animate-in fade-in slide-in-from-bottom-4">
+              <CreatePost myName={myName} onPostSuccess={fetchPosts} />
+              <div className="space-y-4">
+                {posts.map((post) => (
+                  <PostCard
+                    key={post.id}
+                    {...post}
+                    myName={myName}
+                    onUserClick={openProfile}
+                  />
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* 2. Tab Spaces */}
-            {activeTab === "spaces" && <Spaces myName={myName} />}
+          {activeTab === "spaces" && <Spaces myName={myName} />}
 
-            {/* 3. Tab Feedback */}
-            {activeTab === "feedback" && <FeedbackForum myName={myName} />}
+          {activeTab === "notifications" && (
+            <div className="animate-in fade-in">
+              <h2 className="text-xl font-black mb-4 px-2">
+                Aktivitas Terbaru 🔔
+              </h2>
+              <NotificationList myName={myName} />
+            </div>
+          )}
 
-            {/* 4. Tab User Profile */}
-            {activeTab === "profile" && (
-              <UserProfile
-                targetUsername={targetProfile}
-                myName={myName}
-                onBack={() => setActiveTab("feed")}
-                onChat={(target) => {
-                  openPrivateChat(target); // Buka chat di sidebar kanan
-                }}
-              />
-            )}
-          </div>
-        </div>
-
-        {/* --- KOLOM KANAN (Chat & Notif) --- */}
-        <div className="hidden lg:flex flex-col w-1/4 gap-6 sticky top-6 h-fit">
-          {/* List Notifikasi */}
-          <NotificationList myName={myName} />
-
-          {/* Widget Chat */}
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-1 h-[600px] overflow-hidden">
-            {chatMode === "dashboard" && (
-              <div className="p-3 h-full overflow-y-auto">
-                <h3 className="font-bold text-gray-800 mb-3 px-2">💬 Pesan</h3>
-                <ChatDashboard
+          {activeTab === "chat" && (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-100 h-[calc(100vh-180px)] md:h-[600px] overflow-hidden">
+              {chatMode === "dashboard" && (
+                <div className="p-4 h-full overflow-y-auto">
+                  <ChatDashboard
+                    myName={myName}
+                    onSelectChat={openPrivateChat}
+                    onOpenGlobal={() => {
+                      setActiveGroup({ id: "global", name: "Global" });
+                      setChatMode("group");
+                    }}
+                    onSelectGroup={(g) => {
+                      setActiveGroup(g);
+                      setChatMode("group");
+                    }}
+                    onlineUsers={onlineUsers}
+                  />
+                </div>
+              )}
+              {chatMode === "private" && (
+                <PrivateChat
                   myName={myName}
-                  onSelectChat={openPrivateChat}
-                  onOpenGlobal={() =>
-                    openGroupChat({
-                      id: "global",
-                      name: "Global Semesta",
-                      admin: "system",
-                    })
-                  }
-                  onSelectGroup={openGroupChat}
+                  partnerName={chatPartner}
+                  onBack={() => setChatMode("dashboard")}
                   onlineUsers={onlineUsers}
                 />
-              </div>
-            )}
+              )}
+              {chatMode === "group" && (
+                <GroupChat
+                  group={activeGroup}
+                  myName={myName}
+                  onBack={() => setChatMode("dashboard")}
+                />
+              )}
+            </div>
+          )}
 
-            {chatMode === "private" && (
-              <PrivateChat
+          {activeTab === "profile" && (
+            <UserProfile
+              targetUsername={targetProfile}
+              myName={myName}
+              onBack={() => setActiveTab("feed")}
+              onChat={openPrivateChat}
+            />
+          )}
+
+          {activeTab === "feedback" && <FeedbackForum myName={myName} />}
+
+          {/* Leaderboard Mobile View */}
+          {activeTab === "leaderboard" && (
+            <div className="animate-in fade-in">
+              <h2 className="text-xl font-black mb-4 px-2">
+                Peringkat Warga 🏆
+              </h2>
+              <Leaderboard />
+              <div className="mt-6">
+                <FriendList
+                  myName={myName}
+                  onlineUsers={onlineUsers}
+                  onSelectUser={openPrivateChat}
+                />
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* --- RIGHT SIDEBAR (Desktop Only) --- */}
+        <aside className="hidden lg:flex flex-col w-1/4 gap-6 sticky top-24 h-fit">
+          <NotificationList myName={myName} />
+          <div className="bg-white rounded-3xl p-4 border border-gray-100 shadow-sm">
+            <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+              💬 Pesan Cepat
+            </h3>
+            <div className="h-[400px] overflow-hidden">
+              {/* Chat widget simplified for sidebar */}
+              <ChatDashboard
                 myName={myName}
-                partnerName={chatPartner}
-                onBack={() => setChatMode("dashboard")}
+                onSelectChat={openPrivateChat}
+                onSelectGroup={(g) => {
+                  setActiveGroup(g);
+                  setChatMode("group");
+                  setActiveTab("chat");
+                }}
                 onlineUsers={onlineUsers}
               />
-            )}
-
-            {chatMode === "group" && (
-              <GroupChat
-                group={activeGroup}
-                myName={myName}
-                onBack={() => setChatMode("dashboard")}
-              />
-            )}
+            </div>
           </div>
-        </div>
-      </div>
+        </aside>
+      </main>
 
-      {/* --- FOOTER MOBILE (Optional) --- */}
-      <div className="md:hidden fixed bottom-0 w-full bg-white border-t border-gray-200 p-3 flex justify-around items-center z-50 pb-safe">
-        <button onClick={() => setActiveTab("feed")} className="text-2xl">
-          🏠
+      {/* --- BOTTOM NAVIGATION (Mobile Only) --- */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-t border-gray-100 flex justify-around items-center p-3 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+        <button
+          onClick={() => setActiveTab("feed")}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === "feed" ? "text-green-600 scale-110" : "text-gray-400"}`}
+        >
+          <span className="text-xl">🏠</span>
+          <span className="text-[10px] font-bold">Home</span>
         </button>
-        <button onClick={() => setActiveTab("spaces")} className="text-2xl">
-          🎙️
+        <button
+          onClick={() => setActiveTab("chat")}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === "chat" ? "text-blue-600 scale-110" : "text-gray-400"}`}
+        >
+          <div className="relative">
+            <span className="text-xl">💬</span>
+            <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
+          </div>
+          <span className="text-[10px] font-bold">Chat</span>
         </button>
-        <button onClick={() => openProfile(myName)} className="text-2xl">
-          👤
+        <button
+          onClick={() => setActiveTab("spaces")}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === "spaces" ? "text-purple-600 scale-110" : "text-gray-400"}`}
+        >
+          <span className="text-xl">🎙️</span>
+          <span className="text-[10px] font-bold">Spaces</span>
         </button>
-      </div>
+        <button
+          onClick={() => setActiveTab("notifications")}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === "notifications" ? "text-orange-500 scale-110" : "text-gray-400"}`}
+        >
+          <span className="text-xl">🔔</span>
+          <span className="text-[10px] font-bold">Notif</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("leaderboard")}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === "leaderboard" ? "text-yellow-600 scale-110" : "text-gray-400"}`}
+        >
+          <span className="text-xl">🏆</span>
+          <span className="text-[10px] font-bold">Rank</span>
+        </button>
+      </nav>
     </div>
   );
 }
