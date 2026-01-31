@@ -38,68 +38,79 @@ export default function Home() {
   const [toastMsg, setToastMsg] = useState(null); 
   const [incomingCall, setIncomingCall] = useState(null); 
 
+  // Status Koneksi Realtime (Untuk Debugging)
+  const [realtimeStatus, setRealtimeStatus] = useState("🔴");
+
   // 1. Auth Check
   useEffect(() => {
     const savedUser = localStorage.getItem("pear_username");
     if (savedUser) setMyName(savedUser);
   }, []);
 
-  // 2. GLOBAL REALTIME LISTENER (Jantung Notifikasi)
+  // 2. GLOBAL REALTIME LISTENER (THE BIG EAR) 👂
   useEffect(() => {
     if (!myName) return;
 
-    // A. Feed Post
-    fetchPosts();
-    const postChannel = supabase.channel("public:posts_feed")
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "posts" }, () => fetchPosts())
-        .subscribe();
+    console.log("Menghubungkan ke Saluran Realtime sebagai:", myName);
 
-    // B. Presence (Online User)
-    const presenceChannel = supabase.channel("global_presence")
-      .on("presence", { event: "sync" }, () => {
-        const newState = presenceChannel.presenceState();
-        const users = new Set();
-        for (let id in newState) { newState[id].forEach(u => users.add(u.username)); }
-        setOnlineUsers(users);
-      })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-            await presenceChannel.track({ username: myName, online_at: new Date().toISOString() });
-        }
-      });
+    // Channel Tunggal untuk Semua Aktivitas (Lebih Stabil)
+    const channel = supabase.channel("super_channel_pear_app")
+        
+        // A. DENGAR STATUS ONLINE (Presence)
+        .on("presence", { event: "sync" }, () => {
+            const newState = channel.presenceState();
+            const users = new Set();
+            for (let id in newState) { newState[id].forEach(u => users.add(u.username)); }
+            setOnlineUsers(users);
+        })
 
-    // C. NOTIFIKASI & CALL (REVISI LEBIH KUAT) 🚀
-    const notifChannel = supabase.channel("global_notif_v2") // Ganti nama channel biar refresh
-        // Dengar Notifikasi Umum
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient=eq.${myName}` }, 
-            (payload) => {
-                showToast(`🔔 ${payload.new.content}`, "info");
-            }
+        // B. DENGAR POSTINGAN BARU
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "posts" }, 
+            () => fetchPosts()
         )
-        // Dengar Pesan Masuk
+
+        // C. DENGAR NOTIFIKASI
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient=eq.${myName}` }, 
+            (payload) => showToast(`🔔 ${payload.new.content}`, "info")
+        )
+
+        // D. DENGAR PESAN PRIBADI
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "private_messages", filter: `receiver=eq.${myName}` },
             (payload) => {
+                // Hanya notif jika sedang TIDAK chat dengan orang tersebut
                 if (chatMode !== 'private' || chatPartner !== payload.new.sender) {
-                    showToast(`💬 @${payload.new.sender}: "${payload.new.content.substring(0, 20)}..."`, "message");
+                    showToast(`💬 ${payload.new.sender}: ${payload.new.content}`, "message");
                 }
             }
         )
-        // Dengar Telepon Masuk (TANPA FILTER DI SERVER, FILTER DI CLIENT BIAR AMAN)
+
+        // E. DENGAR TELEPON (KUNCI PERBAIKAN DISINI) 🔑
+        // Kita HAPUS filter 'receiver=eq...' biar dia dengar SEMUA perubahan tabel calls
+        // Lalu kita filter manual pakai JavaScript (lebih aman dari typo)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "calls" },
             (payload) => {
-                // Cek manual disini apakah penerimanya saya
-                if (payload.new.receiver === myName && payload.new.status === 'ringing') {
-                    console.log("ADA TELEPON MASUK DARI:", payload.new.caller);
+                console.log("⚡ Ada Telepon Baru di Database:", payload.new);
+                
+                // Cek apakah penerimanya SAYA (Case Insensitive biar aman)
+                if (payload.new.receiver.toLowerCase() === myName.toLowerCase() && payload.new.status === 'ringing') {
+                    console.log("📞 ITU PANGGILAN BUAT SAYA!");
                     setIncomingCall(payload.new);
                 }
             }
         )
-        .subscribe();
+        .subscribe(async (status) => {
+            if (status === "SUBSCRIBED") {
+                setRealtimeStatus("🟢"); // Hijau = Connect
+                await channel.track({ username: myName, online_at: new Date().toISOString() });
+            } else {
+                setRealtimeStatus("🔴"); // Merah = Putus
+            }
+        });
+
+    fetchPosts();
 
     return () => {
-        supabase.removeChannel(postChannel);
-        supabase.removeChannel(presenceChannel);
-        supabase.removeChannel(notifChannel);
+        supabase.removeChannel(channel);
     };
   }, [myName, chatMode, chatPartner]);
 
@@ -155,7 +166,13 @@ export default function Home() {
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab("feed")}>
             <span className="text-2xl">🍐</span>
-            <h1 className="text-xl font-black bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent">PEAR</h1>
+            <div className="flex flex-col">
+                <h1 className="text-xl font-black bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent leading-none">PEAR</h1>
+                {/* Indikator Status Server (Kecil di bawah logo) */}
+                <span className="text-[9px] text-gray-400 flex items-center gap-1">
+                    {realtimeStatus === "🟢" ? "Server Connected" : "Connecting..."} {realtimeStatus}
+                </span>
+            </div>
           </div>
           <div className="flex items-center gap-4">
              <button onClick={() => setActiveTab("feedback")} className="hidden md:block text-xs font-bold text-gray-400 hover:text-orange-500 transition">💡 Saran</button>
