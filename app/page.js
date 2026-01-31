@@ -53,7 +53,27 @@ export default function Home() {
 
     console.log("Menghubungkan ke Saluran Realtime sebagai:", myName);
 
-    // Channel Tunggal untuk Semua Aktivitas (Lebih Stabil)
+    // --- LOGIC BARU: Cek Panggilan "Nyangkut" Saat Refresh ---
+    // Ini berguna kalau kamu telat buka web pas ada yang nelpon
+    const checkActiveCall = async () => {
+        const { data } = await supabase
+            .from("calls")
+            .select("*")
+            .ilike("receiver", myName) // Case insensitive (bombom == Bombom)
+            .eq("status", "ringing") // Cari yang masih berdering
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single();
+            
+        if (data) {
+            console.log("🔔 Menemukan panggilan aktif saat load:", data);
+            setIncomingCall(data);
+        }
+    };
+    checkActiveCall();
+    // ---------------------------------------------------------
+
+    // Channel Tunggal untuk Semua Aktivitas
     const channel = supabase.channel("super_channel_pear_app")
         
         // A. DENGAR STATUS ONLINE (Presence)
@@ -85,8 +105,6 @@ export default function Home() {
         )
 
         // E. DENGAR TELEPON (KUNCI PERBAIKAN DISINI) 🔑
-        // Kita HAPUS filter 'receiver=eq...' biar dia dengar SEMUA perubahan tabel calls
-        // Lalu kita filter manual pakai JavaScript (lebih aman dari typo)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "calls" },
             (payload) => {
                 console.log("⚡ Ada Telepon Baru di Database:", payload.new);
