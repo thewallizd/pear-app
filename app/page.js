@@ -1,239 +1,294 @@
 "use client";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient"; 
-import CreatePost from "@/components/CreatePost"; 
-import PostCard from "@/components/PostCard"; 
-import Auth from "@/components/Auth"; 
-import ChatRoom from "@/components/ChatRoom"; 
-import PrivateChat from "@/components/PrivateChat";
-import ChatDashboard from "@/components/ChatDashboard"; 
-import NotificationList from "@/components/NotificationList";
+// --- IMPORT SEMUA KOMPONEN ---
+import Onboarding from "@/components/Onboarding";
+import CreatePost from "@/components/CreatePost";
+import PostCard from "@/components/PostCard";
 import ProfileDashboard from "@/components/ProfileDashboard";
 import Leaderboard from "@/components/Leaderboard";
-import UserProfile from "@/components/UserProfile"; 
-import FriendsList from "@/components/FriendsList"; 
-import GroupChat from "@/components/GroupChat"; 
-import Onboarding from "@/components/Onboarding"; 
+import FriendList from "@/components/FriendList";
+import NotificationList from "@/components/NotificationList";
+import ChatDashboard from "@/components/ChatDashboard";
+import PrivateChat from "@/components/PrivateChat";
+import GroupChat from "@/components/GroupChat";
+import Spaces from "@/components/Spaces";
 import FeedbackForum from "@/components/FeedbackForum";
-import Spaces from "@/components/Spaces"; 
-
-// --- KOMPONEN SKELETON LOADING (Biar Pro) ---
-const SkeletonPost = () => (
-  <div className="bg-white p-5 rounded-3xl border border-gray-100 mb-4 animate-pulse">
-    <div className="flex gap-3 mb-4">
-      <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
-      <div className="flex-1 space-y-2 py-1">
-          <div className="h-3 bg-gray-200 rounded w-1/3"></div>
-          <div className="h-2 bg-gray-200 rounded w-1/4"></div>
-      </div>
-    </div>
-    <div className="space-y-2">
-      <div className="h-3 bg-gray-200 rounded w-full"></div>
-      <div className="h-3 bg-gray-200 rounded w-5/6"></div>
-      <div className="h-3 bg-gray-200 rounded w-4/6"></div>
-    </div>
-  </div>
-);
-// ---------------------------------------------
+import UserProfile from "@/components/UserProfile";
 
 export default function Home() {
+  const [myName, setMyName] = useState("");
+  const [activeTab, setActiveTab] = useState("feed"); // 'feed', 'spaces', 'feedback', 'profile'
+  const [targetProfile, setTargetProfile] = useState(""); // Username profil yang sedang dilihat
+
+  // State untuk Chat (Sidebar Kanan)
+  const [chatMode, setChatMode] = useState("dashboard"); // 'dashboard', 'private', 'group'
+  const [chatPartner, setChatPartner] = useState(null);
+  const [activeGroup, setActiveGroup] = useState(null);
+
+  // State Data Global
   const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState("Home");
-  const [sortBy, setSortBy] = useState("trending");
-  const [limit, setLimit] = useState(10); 
-
-  const [myName, setMyName] = useState(null); 
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [chatPartner, setChatPartner] = useState(null); 
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  const [selectedGroup, setSelectedGroup] = useState(null); 
-  const [viewProfileUser, setViewProfileUser] = useState(null); 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [isSearching, setIsSearching] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
 
+  // 1. Cek Login saat pertama buka
   useEffect(() => {
-    const savedName = localStorage.getItem('pear_username');
-    if (savedName) { setMyName(savedName); fetchData(savedName); } else { setLoading(false); }
+    const savedUser = localStorage.getItem("pear_username");
+    if (savedUser) setMyName(savedUser);
   }, []);
 
-  const fetchData = (name, query = "") => { 
-    const checkUserStatus = async () => {
-       const { data } = await supabase.from("users").select("has_onboarded").eq("username", name).single();
-       if (data && !data.has_onboarded) { setShowOnboarding(true); }
-    };
-    if (!query) checkUserStatus();
+  // 2. Setup Realtime Presence (Cek siapa yang Online)
+  useEffect(() => {
+    if (!myName) return;
 
-    const fetchPosts = async () => {
-      setLoading(true);
-      let dbQuery = supabase.from("posts").select("*");
+    // Gabung ke channel global 'presence'
+    const channel = supabase.channel("global_presence");
 
-      if (query.trim()) {
-        dbQuery = dbQuery.or(`content.ilike.%${query}%,author.ilike.%${query}%,title.ilike.%${query}%`);
-      } else {
-        if (sortBy === "trending") {
-            const sevenDaysAgo = new Date(new Date().getTime() - (7 * 24 * 60 * 60 * 1000)).toISOString();
-            dbQuery = dbQuery.gt("created_at", sevenDaysAgo).order("votes", { ascending: false });
-        } else {
-            dbQuery = dbQuery.order("created_at", { ascending: false });
-        }
-      }
-
-      dbQuery = dbQuery.limit(limit);
-      const { data } = await dbQuery;
-      if (data) setPosts(data);
-      setLoading(false);
-    };
-
-    const fetchUnreadNotifs = async () => {
-      if (!name) return;
-      const { count } = await supabase.from("notifications").select("*", { count: 'exact', head: true }).eq("recipient", name).eq("is_read", false);
-      setUnreadCount(count || 0);
-    };
-
-    fetchPosts(); fetchUnreadNotifs();
-
-    const presenceChannel = supabase.channel('global_presence').on('presence', { event: 'sync' }, () => {
-        const newState = presenceChannel.presenceState();
+    channel
+      .on("presence", { event: "sync" }, () => {
+        const newState = channel.presenceState();
         const users = new Set();
-        for (const id in newState) { newState[id].forEach(u => users.add(u.user)); }
+        // Loop semua user yang connect
+        for (let id in newState) {
+          newState[id].forEach((u) => users.add(u.username));
+        }
         setOnlineUsers(users);
-      }).subscribe(async (status) => { if (status === 'SUBSCRIBED') { await presenceChannel.track({ user: name, online_at: new Date().toISOString() }); } });
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track({
+            username: myName,
+            online_at: new Date().toISOString(),
+          });
+        }
+      });
 
-    const channel = supabase.channel("realtime_main")
-      .on("postgres_changes", { event: "*", schema: "public", table: "posts" }, (payload) => {
-          if (query) return; 
-          if (payload.eventType === "INSERT") { setPosts((prev) => [payload.new, ...prev]); } 
-          else if (payload.eventType === "UPDATE") { setPosts((prev) => prev.map((post) => (post.id === payload.new.id ? payload.new : post)).sort((a, b) => b.votes - a.votes)); } 
-          else if (payload.eventType === "DELETE") { setPosts((prev) => prev.filter((post) => post.id !== payload.old.id)); }
-      })
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications" }, (payload) => {
-          if (payload.new.recipient === name) setUnreadCount((prev) => prev + 1);
-      })
+    // Load Postingan Awal
+    fetchPosts();
+
+    // Listener Post Baru
+    const postChannel = supabase
+      .channel("public:posts_feed")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "posts" },
+        (payload) => {
+          setPosts((prev) => [payload.new, ...prev]);
+        },
+      )
       .subscribe();
-      
-    return () => { supabase.removeChannel(channel); supabase.removeChannel(presenceChannel); };
+
+    return () => {
+      supabase.removeChannel(channel);
+      supabase.removeChannel(postChannel);
+    };
+  }, [myName]);
+
+  const fetchPosts = async () => {
+    const { data } = await supabase
+      .from("posts")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (data) setPosts(data);
   };
 
-  useEffect(() => { if (myName) fetchData(myName, searchQuery); }, [sortBy, limit]);
-  const handleLoadMore = () => { setLimit(prev => prev + 10); };
-  const handleSearch = (e) => { e.preventDefault(); setIsSearching(true); fetchData(myName, searchQuery); };
-  const clearSearch = () => { setSearchQuery(""); setIsSearching(false); fetchData(myName, ""); };
-  const handleLoginSuccess = (username) => { localStorage.setItem('pear_username', username); setMyName(username); fetchData(username); };
-  const handleLogout = () => { if (window.confirm("Yakin mau logout?")) { localStorage.removeItem('pear_username'); setMyName(null); setPosts([]); } };
+  // --- HANDLERS ---
 
-  if (!myName) return <Auth onLoginSuccess={handleLoginSuccess} />;
-
-  const startPrivateChat = (targetUser) => {
-    if (targetUser === myName) return alert("Gabut ya chat diri sendiri?");
-    setChatPartner(targetUser); setActiveTab("Private");
+  const handleLogout = () => {
+    if (confirm("Yakin mau keluar?")) {
+      localStorage.removeItem("pear_username");
+      setMyName("");
+      window.location.reload();
+    }
   };
-  const handleSelectGroup = (group) => { setSelectedGroup(group); setActiveTab("GroupChat"); };
-  const handleVisitProfile = (targetUser) => { if (targetUser === myName) { setActiveTab("Profile"); } else { setViewProfileUser(targetUser); setActiveTab("UserProfile"); } };
-  const openGlobalChat = () => { setActiveTab("GlobalChat"); };
-  const handleOpenNotif = () => { setActiveTab("Notifications"); setUnreadCount(0); };
-  
+
+  const openProfile = (username) => {
+    setTargetProfile(username);
+    setActiveTab("profile");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const openPrivateChat = (username) => {
+    setChatPartner(username);
+    setChatMode("private");
+  };
+
+  const openGroupChat = (group) => {
+    setActiveGroup(group);
+    setChatMode("group");
+  };
+
+  // --- RENDER UTAMA ---
+
+  // 1. Kalau belum login, tampilkan Onboarding
+  if (!myName) {
+    return <Onboarding onFinish={(name) => setMyName(name)} />;
+  }
+
+  // 2. Kalau sudah login, tampilkan Dashboard Pear
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
-      {showOnboarding && <Onboarding myName={myName} onFinish={() => setShowOnboarding(false)} />}
+    <div className="min-h-screen bg-[#F3F4F6] text-gray-800 font-sans">
+      {/* Container Utama (Max Width 1280px) */}
+      <div className="max-w-7xl mx-auto flex flex-col md:flex-row gap-6 p-4 md:p-6">
+        {/* --- KOLOM KIRI (Sidebar) --- */}
+        <div className="hidden md:flex flex-col w-1/4 gap-6 sticky top-6 h-fit overflow-y-auto max-h-screen no-scrollbar">
+          {/* Widget Profil Saya */}
+          <ProfileDashboard
+            myName={myName}
+            onLogout={handleLogout}
+            onViewProfile={() => openProfile(myName)}
+          />
 
-      <div className="max-w-6xl mx-auto flex gap-6 px-4 pt-6">
-        
-        {/* --- SIDEBAR --- */}
-        <aside className="hidden md:flex flex-col w-64 shrink-0 space-y-2 sticky top-6 h-fit">
-          <button onClick={() => setActiveTab("Home")} className="text-2xl font-bold text-green-600 mb-6 flex items-center gap-2 hover:scale-105 transition text-left w-fit" title="Kembali ke Beranda">
-            🍐 Pear <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Universal</span>
-          </button>
-          
-          <button onClick={() => setActiveTab("Friends")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Friends" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Friends 👥</button>
-          <button onClick={() => setActiveTab("Space")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Space" ? "bg-purple-50 text-purple-700 font-bold border border-purple-100" : "text-gray-700 hover:bg-white"}`}>Space 🎙️</button>
-          <button onClick={() => setActiveTab("Chat 💬")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Chat 💬" || activeTab === "Private" || activeTab === "GlobalChat" || activeTab === "GroupChat" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Chat 💬</button>
-          <button onClick={() => setActiveTab("Feedback")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Feedback" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Saran & Keluhan 📢</button>
-          <button onClick={() => setActiveTab("Leaderboard")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Leaderboard" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Klasemen 🏆</button>
-          <button onClick={handleOpenNotif} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium justify-between ${activeTab === "Notifications" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}><span>Notifications</span>{unreadCount > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-bounce">{unreadCount}</span>}</button>
-          <button onClick={() => setActiveTab("Profile")} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition font-medium ${activeTab === "Profile" ? "bg-green-50 text-green-700 font-bold border border-green-100" : "text-gray-700 hover:bg-white"}`}>Profile</button>
-        </aside>
+          {/* Leaderboard */}
+          <Leaderboard />
 
-        <main className="flex-1 w-full max-w-2xl pb-20 relative">
-          <div className="md:hidden flex justify-between items-center mb-4 sticky top-0 bg-gray-50/95 backdrop-blur z-10 py-2">
-            <button onClick={() => setActiveTab("Home")} className="text-xl font-bold text-green-600 hover:opacity-80">Pear 🍐</button>
-            <div className="flex gap-2">
-              <button onClick={() => setActiveTab("Space")} className="text-xs font-bold border px-2 py-1 rounded">🎙️</button>
-              <button onClick={() => setActiveTab('Chat 💬')} className="text-xs font-bold border px-2 py-1 rounded">💬</button>
-              <button onClick={handleOpenNotif} className="text-xs font-bold border px-2 py-1 rounded relative">🔔 {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 w-3 h-3 rounded-full border-2 border-white"></span>}</button>
-              <button onClick={() => setActiveTab('Profile')} className="text-xs font-bold border px-2 py-1 rounded">👤</button>
+          {/* Friend List (Buku Warga) */}
+          <FriendList
+            myName={myName}
+            onlineUsers={onlineUsers}
+            onSelectUser={openPrivateChat}
+          />
+        </div>
+
+        {/* --- KOLOM TENGAH (Main Content) --- */}
+        <div className="flex-1 w-full min-w-0">
+          {/* Tab Navigasi Atas */}
+          <div className="bg-white/80 backdrop-blur-md sticky top-0 z-20 p-2 rounded-2xl mb-6 shadow-sm flex justify-between items-center border border-gray-100">
+            <div className="flex gap-1">
+              <button
+                onClick={() => setActiveTab("feed")}
+                className={`px-6 py-2 rounded-xl font-bold text-sm transition ${activeTab === "feed" ? "bg-green-500 text-white shadow-lg shadow-green-200" : "text-gray-500 hover:bg-gray-100"}`}
+              >
+                🏠 Home
+              </button>
+              <button
+                onClick={() => setActiveTab("spaces")}
+                className={`px-6 py-2 rounded-xl font-bold text-sm transition ${activeTab === "spaces" ? "bg-purple-600 text-white shadow-lg shadow-purple-200" : "text-gray-500 hover:bg-gray-100"}`}
+              >
+                🎙️ Spaces
+              </button>
+              <button
+                onClick={() => setActiveTab("feedback")}
+                className={`px-6 py-2 rounded-xl font-bold text-sm transition ${activeTab === "feedback" ? "bg-orange-500 text-white shadow-lg shadow-orange-200" : "text-gray-500 hover:bg-gray-100"}`}
+              >
+                💡 Saran
+              </button>
             </div>
+
+            {/* Mobile Logout (Hidden on Desktop) */}
+            <button
+              onClick={handleLogout}
+              className="md:hidden text-gray-400 p-2 text-xl"
+            >
+              🚪
+            </button>
           </div>
 
-          {/* RENDER PAGES */}
-          {activeTab === "Space" && <Spaces myName={myName} onVisitProfile={handleVisitProfile} />}
-          {activeTab === "Feedback" && <FeedbackForum myName={myName} />}
-          {activeTab === "Friends" && <FriendsList myName={myName} onlineUsers={onlineUsers} onVisitProfile={handleVisitProfile} onChat={startPrivateChat} />}
-          {activeTab === "UserProfile" && viewProfileUser && <UserProfile targetUsername={viewProfileUser} myName={myName} onBack={() => setActiveTab("Home")} onChat={startPrivateChat} />}
-          {activeTab === "Leaderboard" && <Leaderboard myName={myName} onUserClick={handleVisitProfile} />}
-          {activeTab === "Notifications" && <NotificationList myName={myName} />}
-          {activeTab === "Chat 💬" && <ChatDashboard myName={myName} onSelectChat={startPrivateChat} onOpenGlobal={openGlobalChat} onSelectGroup={handleSelectGroup} onlineUsers={onlineUsers} />}
-          {activeTab === "GlobalChat" && (<><button onClick={() => setActiveTab("Chat 💬")} className="mb-2 text-xs font-bold text-gray-500 hover:text-green-600 flex items-center gap-1">⬅ Kembali</button><ChatRoom myName={myName} onUserClick={handleVisitProfile} /></>)}
-          {activeTab === "GroupChat" && selectedGroup && (<><button onClick={() => setActiveTab("Chat 💬")} className="mb-2 text-xs font-bold text-gray-500 hover:text-blue-600 flex items-center gap-1">⬅ Kembali ke Dashboard</button><GroupChat myName={myName} group={selectedGroup} onBack={() => setActiveTab("Chat 💬")} onVisitProfile={handleVisitProfile} /></>)}
-          {activeTab === "Private" && chatPartner && <PrivateChat myName={myName} partnerName={chatPartner} onBack={() => setActiveTab("Chat 💬")} onlineUsers={onlineUsers} />}
-          {activeTab === "Profile" && <ProfileDashboard myName={myName} onLogout={handleLogout} onUserClick={handleVisitProfile} />}
-          
-          {activeTab === "Home" && (
-            <>
-              <form onSubmit={handleSearch} className="mb-4 relative group">
-                <input type="text" placeholder="Cari di seluruh semesta..." className="w-full p-3 pl-10 rounded-2xl border border-gray-200 bg-white focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100 transition shadow-sm" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-                <span className="absolute left-3 top-3.5 text-gray-400">🔍</span>
-                {searchQuery && <button type="button" onClick={clearSearch} className="absolute right-3 top-2.5 text-gray-400 hover:text-red-500 p-1 hover:bg-red-50 rounded-full transition">✖</button>}
-              </form>
-
-              {!isSearching && (
-                <div className="flex items-center gap-2 mb-6 p-1 bg-white rounded-xl border border-gray-100 w-fit shadow-sm">
-                  <button onClick={() => setSortBy("trending")} className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${sortBy === "trending" ? "bg-orange-100 text-orange-700" : "text-gray-500 hover:bg-gray-50"}`}>
-                    🔥 Lagi Panas
-                  </button>
-                  <button onClick={() => setSortBy("newest")} className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${sortBy === "newest" ? "bg-green-100 text-green-700" : "text-gray-500 hover:bg-gray-50"}`}>
-                    ✨ Baru Mateng
-                  </button>
-                </div>
-              )}
-
-              {isSearching && <div className="mb-4 flex items-center justify-between"><span className="text-sm font-bold text-gray-600">Hasil pencarian: "{searchQuery}"</span><button onClick={clearSearch} className="text-xs text-green-600 font-bold hover:underline">Reset</button></div>}
-              
-              {!isSearching && <CreatePost myName={myName} />}
-              
-              <div className="space-y-4">
-                {/* --- MENGGUNAKAN SKELETON LOADING YANG BARU --- */}
-                {loading && posts.length === 0 ? (
-                    <>
-                       <SkeletonPost />
-                       <SkeletonPost />
-                       <SkeletonPost />
-                    </>
-                ) : posts.length === 0 ? (
-                    <div className="text-center py-16 text-gray-400 bg-white rounded-3xl border border-dashed border-gray-200">
-                        <div className="text-4xl mb-2">📭</div>
-                        {isSearching ? `Tidak ada hasil untuk "${searchQuery}".` : "Belum ada postingan."}
+          {/* KONTEN BERDASARKAN TAB */}
+          <div className="min-h-[500px]">
+            {/* 1. Tab Home Feed */}
+            {activeTab === "feed" && (
+              <div className="animate-in fade-in slide-in-from-bottom-4">
+                <CreatePost myName={myName} onPostSuccess={fetchPosts} />
+                <div className="space-y-6">
+                  {posts.length === 0 ? (
+                    <div className="text-center py-20 opacity-50">
+                      <div className="text-4xl animate-bounce">🍐</div>
+                      <p className="mt-4">
+                        Belum ada postingan. Jadilah yang pertama!
+                      </p>
                     </div>
-                ) : (
-                    <>
-                        {posts.map((post) => (
-                            <PostCard key={post.id} {...post} createdAt={post.created_at} onUserClick={handleVisitProfile} myName={myName} />
-                        ))}
-                        
-                        {!isSearching && (
-                            <button onClick={handleLoadMore} className="w-full py-3 bg-white border border-gray-200 text-gray-500 font-bold rounded-xl hover:bg-gray-50 transition text-sm">
-                                Muat Lebih Banyak ⬇️
-                            </button>
-                        )}
-                    </>
-                )}
+                  ) : (
+                    posts.map((post) => (
+                      <PostCard
+                        key={post.id}
+                        {...post}
+                        myName={myName}
+                        onUserClick={openProfile} // Klik avatar -> Buka Profil
+                      />
+                    ))
+                  )}
+                </div>
               </div>
-            </>
-          )}
-        </main>
+            )}
+
+            {/* 2. Tab Spaces */}
+            {activeTab === "spaces" && <Spaces myName={myName} />}
+
+            {/* 3. Tab Feedback */}
+            {activeTab === "feedback" && <FeedbackForum myName={myName} />}
+
+            {/* 4. Tab User Profile */}
+            {activeTab === "profile" && (
+              <UserProfile
+                targetUsername={targetProfile}
+                myName={myName}
+                onBack={() => setActiveTab("feed")}
+                onChat={(target) => {
+                  openPrivateChat(target); // Buka chat di sidebar kanan
+                }}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* --- KOLOM KANAN (Chat & Notif) --- */}
+        <div className="hidden lg:flex flex-col w-1/4 gap-6 sticky top-6 h-fit">
+          {/* List Notifikasi */}
+          <NotificationList myName={myName} />
+
+          {/* Widget Chat */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-1 h-[600px] overflow-hidden">
+            {chatMode === "dashboard" && (
+              <div className="p-3 h-full overflow-y-auto">
+                <h3 className="font-bold text-gray-800 mb-3 px-2">💬 Pesan</h3>
+                <ChatDashboard
+                  myName={myName}
+                  onSelectChat={openPrivateChat}
+                  onOpenGlobal={() =>
+                    openGroupChat({
+                      id: "global",
+                      name: "Global Semesta",
+                      admin: "system",
+                    })
+                  }
+                  onSelectGroup={openGroupChat}
+                  onlineUsers={onlineUsers}
+                />
+              </div>
+            )}
+
+            {chatMode === "private" && (
+              <PrivateChat
+                myName={myName}
+                partnerName={chatPartner}
+                onBack={() => setChatMode("dashboard")}
+                onlineUsers={onlineUsers}
+              />
+            )}
+
+            {chatMode === "group" && (
+              <GroupChat
+                group={activeGroup}
+                myName={myName}
+                onBack={() => setChatMode("dashboard")}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* --- FOOTER MOBILE (Optional) --- */}
+      <div className="md:hidden fixed bottom-0 w-full bg-white border-t border-gray-200 p-3 flex justify-around items-center z-50 pb-safe">
+        <button onClick={() => setActiveTab("feed")} className="text-2xl">
+          🏠
+        </button>
+        <button onClick={() => setActiveTab("spaces")} className="text-2xl">
+          🎙️
+        </button>
+        <button onClick={() => openProfile(myName)} className="text-2xl">
+          👤
+        </button>
       </div>
     </div>
   );

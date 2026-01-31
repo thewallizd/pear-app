@@ -1,38 +1,50 @@
 "use client";
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 
 export default function TimeAgo({ timestamp }) {
-  const [timeText, setTimeText] = useState('');
+  const [timeString, setTimeString] = useState("");
 
   useEffect(() => {
-    const updateTime = () => {
+    // Fungsi pembantu menghitung selisih waktu
+    const calculateTime = () => {
       if (!timestamp) return;
-      
-      const now = new Date();
-      const time = new Date(timestamp);
-      const diff = Math.floor((now - time) / 1000); // Selisih dalam detik
 
-      if (diff < 10) {
-        setTimeText('Baru saja');
-      } else if (diff < 60) {
-        setTimeText(`${diff} detik lalu`);
-      } else if (diff < 3600) {
-        setTimeText(`${Math.floor(diff / 60)} menit lalu`);
-      } else if (diff < 86400) {
-        setTimeText(`${Math.floor(diff / 3600)} jam lalu`);
-      } else if (diff < 604800) {
-        setTimeText(`${Math.floor(diff / 86400)} hari lalu`);
+      const now = new Date();
+      const past = new Date(timestamp);
+      const diffInSeconds = Math.floor((now - past) / 1000);
+
+      if (diffInSeconds < 30) {
+        setTimeString("Baru saja");
+      } else if (diffInSeconds < 60) {
+        setTimeString(`${diffInSeconds} detik lalu`);
+      } else if (diffInSeconds < 3600) {
+        setTimeString(`${Math.floor(diffInSeconds / 60)} menit lalu`);
+      } else if (diffInSeconds < 86400) {
+        setTimeString(`${Math.floor(diffInSeconds / 3600)} jam lalu`);
+      } else if (diffInSeconds < 604800) {
+        // Kurang dari 7 hari
+        setTimeString(`${Math.floor(diffInSeconds / 86400)} hari lalu`);
       } else {
-        // Kalau lebih dari seminggu, tampilkan tanggal biasa
-        setTimeText(time.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }));
+        // Kalau sudah lama banget, tampilkan tanggal asli (misal: 12 Jan 2026)
+        setTimeString(
+          past.toLocaleDateString("id-ID", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          }),
+        );
       }
     };
 
-    updateTime(); // Jalankan langsung
-    const interval = setInterval(updateTime, 10000); // Update setiap 10 detik
+    calculateTime(); // Hitung langsung saat pertama muncul
 
-    return () => clearInterval(interval); // Bersihkan timer saat komponen hilang
+    // Update otomatis setiap 60 detik (biar gak berat)
+    const interval = setInterval(calculateTime, 60000);
+
+    return () => clearInterval(interval); // Bersihkan memori saat komponen hilang
   }, [timestamp]);
 
-  return <span>{timeText}</span>;
+  return (
+    <span className="text-[10px] text-gray-400 font-medium">{timeString}</span>
+  );
 }
