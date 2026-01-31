@@ -2,13 +2,13 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-// --- IMPORT SEMUA KOMPONEN ---
+// Import Komponen
 import Onboarding from "@/components/Onboarding";
 import CreatePost from "@/components/CreatePost";
 import PostCard from "@/components/PostCard";
 import ProfileDashboard from "@/components/ProfileDashboard";
 import Leaderboard from "@/components/Leaderboard";
-import FriendList from "@/components/BukuWarga";
+import FriendList from "@/components/BukuWarga"; // Pastikan nama filenya BukuWarga
 import NotificationList from "@/components/NotificationList";
 import ChatDashboard from "@/components/ChatDashboard";
 import PrivateChat from "@/components/PrivateChat";
@@ -17,18 +17,26 @@ import Spaces from "@/components/Spaces";
 import FeedbackForum from "@/components/FeedbackForum";
 import UserProfile from "@/components/UserProfile";
 
+// Import Fitur Baru
+import Toast from "@/components/Toast";
+import IncomingCall from "@/components/IncomingCall";
+
 export default function Home() {
   const [myName, setMyName] = useState("");
-  const [activeTab, setActiveTab] = useState("feed"); // 'feed', 'spaces', 'notifications', 'chat', 'profile', 'feedback', 'leaderboard'
+  const [activeTab, setActiveTab] = useState("feed");
   const [targetProfile, setTargetProfile] = useState("");
 
   // State Chat
-  const [chatMode, setChatMode] = useState("dashboard"); // 'dashboard', 'private', 'group'
+  const [chatMode, setChatMode] = useState("dashboard");
   const [chatPartner, setChatPartner] = useState(null);
   const [activeGroup, setActiveGroup] = useState(null);
 
   const [posts, setPosts] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
+
+  // State Notifikasi & Call
+  const [toastMsg, setToastMsg] = useState(null); // { msg: "Halo", type: "info" }
+  const [incomingCall, setIncomingCall] = useState(null); // { id: 1, caller: "Budi" }
 
   // 1. Auth Check
   useEffect(() => {
@@ -36,12 +44,24 @@ export default function Home() {
     if (savedUser) setMyName(savedUser);
   }, []);
 
-  // 2. Realtime Presence & Feed
+  // 2. GLOBAL REALTIME LISTENER (Jantung Notifikasi) 💓
   useEffect(() => {
     if (!myName) return;
 
-    const presenceChannel = supabase.channel("global_presence");
-    presenceChannel
+    // A. Feed Post
+    fetchPosts();
+    const postChannel = supabase
+      .channel("public:posts_feed")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "posts" },
+        () => fetchPosts(),
+      )
+      .subscribe();
+
+    // B. Presence (Online User)
+    const presenceChannel = supabase
+      .channel("global_presence")
       .on("presence", { event: "sync" }, () => {
         const newState = presenceChannel.presenceState();
         const users = new Set();
@@ -59,22 +79,64 @@ export default function Home() {
         }
       });
 
-    fetchPosts();
-
-    const postChannel = supabase
-      .channel("public:posts_feed")
+    // C. NOTIFIKASI & PESAN PRIBADI 🔔
+    const notifChannel = supabase
+      .channel("global_notif")
+      // Dengar Notifikasi Umum (Like/Komen)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "posts" },
-        () => fetchPosts(),
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifications",
+          filter: `recipient=eq.${myName}`,
+        },
+        (payload) => {
+          showToast(`🔔 ${payload.new.content}`, "info");
+          // Optional: Play sound here
+        },
+      )
+      // Dengar Pesan Pribadi Masuk (Jika sedang tidak membuka chat orang itu)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "private_messages",
+          filter: `receiver=eq.${myName}`,
+        },
+        (payload) => {
+          if (chatMode !== "private" || chatPartner !== payload.new.sender) {
+            showToast(
+              `💬 Pesan dari @${payload.new.sender}: "${payload.new.content.substring(0, 20)}..."`,
+              "message",
+            );
+          }
+        },
+      )
+      // Dengar Telepon Masuk 📞
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "calls",
+          filter: `receiver=eq.${myName}`,
+        },
+        (payload) => {
+          if (payload.new.status === "ringing") {
+            setIncomingCall(payload.new);
+          }
+        },
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(presenceChannel);
       supabase.removeChannel(postChannel);
+      supabase.removeChannel(presenceChannel);
+      supabase.removeChannel(notifChannel);
     };
-  }, [myName]);
+  }, [myName, chatMode, chatPartner]);
 
   const fetchPosts = async () => {
     const { data } = await supabase
@@ -84,7 +146,11 @@ export default function Home() {
     if (data) setPosts(data);
   };
 
-  // --- NAVIGATION HANDLERS ---
+  // --- HANDLERS ---
+  const showToast = (msg, type = "info") => {
+    setToastMsg({ message: msg, type });
+  };
+
   const handleLogout = () => {
     if (confirm("Yakin ingin logout?")) {
       localStorage.clear();
@@ -92,23 +158,64 @@ export default function Home() {
     }
   };
 
+  // Navigation Logic
   const openProfile = (username) => {
     setTargetProfile(username);
     setActiveTab("profile");
     window.scrollTo(0, 0);
   };
-
   const openPrivateChat = (username) => {
     setChatPartner(username);
     setChatMode("private");
-    setActiveTab("chat"); // Di mobile langsung pindah ke tab chat
+    setActiveTab("chat");
+  };
+
+  // Call Logic
+  const handleAnswerCall = async () => {
+    if (!incomingCall) return;
+    // Update status jadi accepted
+    await supabase
+      .from("calls")
+      .update({ status: "accepted" })
+      .eq("id", incomingCall.id);
+
+    // Buka chat room & UI Call (Logic UI Call ada di PrivateChat, kita arahkan kesana)
+    setChatPartner(incomingCall.caller);
+    setChatMode("private");
+    setActiveTab("chat");
+    setIncomingCall(null); // Tutup modal
+  };
+
+  const handleRejectCall = async () => {
+    if (!incomingCall) return;
+    await supabase
+      .from("calls")
+      .update({ status: "rejected" })
+      .eq("id", incomingCall.id);
+    setIncomingCall(null);
   };
 
   if (!myName) return <Onboarding onFinish={setMyName} />;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0">
-      {/* --- HEADER DESKTOP & MOBILE --- */}
+    <div className="min-h-screen bg-gray-50 pb-20 md:pb-0 font-sans">
+      {/* GLOBAL OVERLAYS */}
+      {toastMsg && (
+        <Toast
+          message={toastMsg.message}
+          type={toastMsg.type}
+          onClose={() => setToastMsg(null)}
+        />
+      )}
+      {incomingCall && (
+        <IncomingCall
+          caller={incomingCall.caller}
+          onAnswer={handleAnswerCall}
+          onReject={handleRejectCall}
+        />
+      )}
+
+      {/* HEADER */}
       <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-40 p-4">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div
@@ -137,8 +244,9 @@ export default function Home() {
         </div>
       </header>
 
+      {/* MAIN CONTENT */}
       <main className="max-w-7xl mx-auto flex gap-6 p-4 md:p-6">
-        {/* --- LEFT SIDEBAR (Desktop Only) --- */}
+        {/* LEFT SIDEBAR */}
         <aside className="hidden md:flex flex-col w-1/4 gap-6 sticky top-24 h-fit">
           <ProfileDashboard
             myName={myName}
@@ -153,9 +261,8 @@ export default function Home() {
           />
         </aside>
 
-        {/* --- MAIN CONTENT (Mobile & Desktop) --- */}
+        {/* CENTER FEED */}
         <section className="flex-1 min-w-0">
-          {/* CONTENT SWITCHER */}
           {activeTab === "feed" && (
             <div className="animate-in fade-in slide-in-from-bottom-4">
               <CreatePost myName={myName} onPostSuccess={fetchPosts} />
@@ -208,6 +315,7 @@ export default function Home() {
                   partnerName={chatPartner}
                   onBack={() => setChatMode("dashboard")}
                   onlineUsers={onlineUsers}
+                  // Pass props tambahan jika perlu
                 />
               )}
               {chatMode === "group" && (
@@ -231,7 +339,6 @@ export default function Home() {
 
           {activeTab === "feedback" && <FeedbackForum myName={myName} />}
 
-          {/* Leaderboard Mobile View */}
           {activeTab === "leaderboard" && (
             <div className="animate-in fade-in">
               <h2 className="text-xl font-black mb-4 px-2">
@@ -249,7 +356,7 @@ export default function Home() {
           )}
         </section>
 
-        {/* --- RIGHT SIDEBAR (Desktop Only) --- */}
+        {/* RIGHT SIDEBAR */}
         <aside className="hidden lg:flex flex-col w-1/4 gap-6 sticky top-24 h-fit">
           <NotificationList myName={myName} />
           <div className="bg-white rounded-3xl p-4 border border-gray-100 shadow-sm">
@@ -257,7 +364,6 @@ export default function Home() {
               💬 Pesan Cepat
             </h3>
             <div className="h-[400px] overflow-hidden">
-              {/* Chat widget simplified for sidebar */}
               <ChatDashboard
                 myName={myName}
                 onSelectChat={openPrivateChat}
@@ -273,7 +379,7 @@ export default function Home() {
         </aside>
       </main>
 
-      {/* --- BOTTOM NAVIGATION (Mobile Only) --- */}
+      {/* MOBILE NAV */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-t border-gray-100 flex justify-around items-center p-3 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
         <button
           onClick={() => setActiveTab("feed")}
