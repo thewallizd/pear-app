@@ -17,30 +17,32 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
 
   useEffect(() => {
     fetchMessages();
-    markAsRead(); // <--- BARU: Tandai pesan sudah dibaca saat buka chat
+    markAsRead();
 
     const channel = supabase.channel(`room_${chatId}`)
-      // A. DENGAR PESAN BARU
+      // A. PESAN BARU
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "private_messages", filter: `chat_id=eq.${chatId}` },
         (payload) => {
           setMessages((prev) => [...prev, payload.new]);
           setIsPartnerTyping(false);
           scrollToBottom();
-          
-          // Kalau pesan itu DARI TEMAN, langsung tandai READ karena kita sedang membuka chatnya
-          if (payload.new.sender === partnerName) {
-              markAsRead();
-          }
+          if (payload.new.sender === partnerName) markAsRead();
         }
       )
-      // B. DENGAR UPDATE (Untuk Centang Biru) ✅
+      // B. UPDATE (READ RECEIPT)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "private_messages", filter: `chat_id=eq.${chatId}` },
         (payload) => {
-            // Update status pesan di layar kita (misal centang jadi biru)
             setMessages((prev) => prev.map(msg => msg.id === payload.new.id ? payload.new : msg));
         }
       )
-      // C. TYPING
+      // C. DELETE (PESAN DIHAPUS) 🗑️ <--- BARU
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "private_messages", filter: `chat_id=eq.${chatId}` },
+        (payload) => {
+            // Hapus pesan dari layar secara realtime
+            setMessages((prev) => prev.filter(msg => msg.id !== payload.old.id));
+        }
+      )
+      // D. TYPING
       .on("broadcast", { event: "typing" }, (payload) => {
           if (payload.payload.user === partnerName) {
               setIsPartnerTyping(true);
@@ -48,7 +50,7 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
               typingTimeoutRef.current = setTimeout(() => setIsPartnerTyping(false), 3000);
           }
       })
-      // D. CALLS
+      // E. CALLS
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "calls" },
         (payload) => {
             if (payload.new.caller.toLowerCase() === myName.toLowerCase()) {
@@ -70,14 +72,8 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
     if (data) { setMessages(data); scrollToBottom(); }
   };
 
-  // FUNGSI TANDAI DIBACA ✅
   const markAsRead = async () => {
-      // Update semua pesan dari PARTNER yang belum dibaca menjadi TRUE
-      await supabase.from("private_messages")
-        .update({ is_read: true })
-        .eq("chat_id", chatId)
-        .eq("sender", partnerName)
-        .eq("is_read", false);
+      await supabase.from("private_messages").update({ is_read: true }).eq("chat_id", chatId).eq("sender", partnerName).eq("is_read", false);
   };
 
   const scrollToBottom = () => {
@@ -91,21 +87,22 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
     setNewMessage("");
   };
 
+  // FUNGSI HAPUS PESAN 🗑️
+  const deleteMessage = async (msgId) => {
+      const isSure = confirm("Tarik pesan ini?");
+      if (isSure) {
+          await supabase.from("private_messages").delete().eq("id", msgId);
+          // UI akan update otomatis lewat listener 'DELETE' di atas
+      }
+  };
+
   const handleTyping = (e) => {
       setNewMessage(e.target.value);
       supabase.channel(`room_${chatId}`).send({ type: "broadcast", event: "typing", payload: { user: myName } });
   };
 
-  // Logic Call (Sama seperti sebelumnya)
-  const handleCall = async () => {
-      setIsCalling(true); setCallStatus("calling");
-      await supabase.from("calls").insert([{ caller: myName, receiver: partnerName, status: 'ringing' }]);
-  };
-  const handleEndCall = async () => {
-      const { data } = await supabase.from("calls").select("id").eq("caller", myName).eq("receiver", partnerName).order("created_at", {ascending:false}).limit(1).single();
-      if (data) await supabase.from("calls").update({ status: 'ended' }).eq("id", data.id);
-      setIsCalling(false); setCallStatus("idle");
-  };
+  const handleCall = async () => { setIsCalling(true); setCallStatus("calling"); await supabase.from("calls").insert([{ caller: myName, receiver: partnerName, status: 'ringing' }]); };
+  const handleEndCall = async () => { const { data } = await supabase.from("calls").select("id").eq("caller", myName).eq("receiver", partnerName).order("created_at", {ascending:false}).limit(1).single(); if (data) await supabase.from("calls").update({ status: 'ended' }).eq("id", data.id); setIsCalling(false); setCallStatus("idle"); };
 
   return (
     <div className="flex flex-col h-full bg-white animate-in slide-in-from-right relative">
@@ -134,11 +131,9 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
                 </div>
                 <div>
                     <h3 className="font-bold text-gray-800 text-sm md:text-base">@{partnerName}</h3>
-                    {isPartnerTyping ? (
-                        <p className="text-[10px] md:text-xs text-green-600 font-bold animate-pulse">Sedang mengetik...</p>
-                    ) : (
-                        <p className="text-[10px] md:text-xs text-gray-400">{isOnline ? "Online" : "Offline"}</p>
-                    )}
+                    <p className={`text-[10px] md:text-xs ${isPartnerTyping ? "text-green-600 font-bold animate-pulse" : "text-gray-400"}`}>
+                        {isPartnerTyping ? "Sedang mengetik..." : (isOnline ? "Online" : "Offline")}
+                    </p>
                 </div>
             </div>
         </div>
@@ -150,18 +145,26 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
         {messages.map((msg) => {
             const isMe = msg.sender === myName;
             return (
-                <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
-                  <div className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm shadow-sm relative ${isMe ? "bg-blue-600 text-white rounded-br-none" : "bg-white text-gray-800 rounded-bl-none"}`}>
-                    {msg.content}
+                <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"} group`}>
+                  <div className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm shadow-sm relative flex items-center gap-2 ${isMe ? "bg-blue-600 text-white rounded-br-none" : "bg-white text-gray-800 rounded-bl-none"}`}>
                     
-                    {/* INDIKATOR CENTANG (Hanya muncul di pesan KITA) */}
+                    {/* TOMBOL SAMPAH (Hanya muncul saat hover di pesan sendiri) 🗑️ */}
                     {isMe && (
-                        <span className="absolute bottom-1 right-2 text-[10px] ml-2 font-bold">
-                            {msg.is_read ? (
-                                <span className="text-blue-200">✓✓</span> // Biru (Dibaca)
-                            ) : (
-                                <span className="text-white/60">✓</span> // Putih (Terkirim)
-                            )}
+                        <button 
+                            onClick={() => deleteMessage(msg.id)}
+                            className="text-white/50 hover:text-white opacity-0 group-hover:opacity-100 transition -ml-1 text-[10px]"
+                            title="Tarik Pesan"
+                        >
+                            🗑️
+                        </button>
+                    )}
+
+                    <span>{msg.content}</span>
+                    
+                    {/* CENTANG BIRU */}
+                    {isMe && (
+                        <span className="text-[10px] ml-1 font-bold mt-1">
+                            {msg.is_read ? <span className="text-blue-200">✓✓</span> : <span className="text-white/60">✓</span>}
                         </span>
                     )}
                   </div>
@@ -171,16 +174,6 @@ export default function PrivateChat({ myName, partnerName, onBack, onlineUsers }
                 </div>
             );
         })}
-        
-        {isPartnerTyping && (
-            <div className="flex flex-col items-start animate-in fade-in slide-in-from-bottom-2">
-                <div className="bg-gray-200 px-4 py-3 rounded-2xl rounded-bl-none flex gap-1">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
-                </div>
-            </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
 
