@@ -1,35 +1,25 @@
-import { Inter } from "next/font/google";
 import "./globals.css";
+import { Inter } from "next/font/google";
+import { Toaster } from "sonner"; // Import Sonner
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata = {
-  title: "Pear - Your Exclusive Space",
-  description: "Platform sosial universal untuk diskusi, berbagi cerita, dan menemukan koneksi bermakna.",
-  generator: 'Next.js',
-  applicationName: 'Pear App',
-  keywords: ['Pear', 'Social Media', 'Depok', 'Komunitas', 'Chat'],
-  authors: [{ name: 'Pear Team' }],
-  creator: 'Pear Team',
-  openGraph: {
-    title: "Pear - Your Exclusive Space",
-    description: "Gabung dengan semesta Pear. Diskusi tanpa batas.",
-    url: "https://pear-app.vercel.app",
-    siteName: "Pear App",
-    locale: "id_ID",
-    type: "website",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Pear App",
-    description: "Ruang eksklusif untuk koneksi yang bermakna.",
-  },
+  title: "PEAR APP",
+  description: "Komunitas Digital Seru-seruan",
+  manifest: "/manifest.json", 
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="id">
-      <body className={inter.className}>{children}</body>
+      {/* Tambahkan dark:bg-slate-900 agar background full hitam di HP/Laptop */}
+      <body className={`${inter.className} bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-white transition-colors duration-300`}>
+        {children}
+        
+        {/* Notifikasi (Sonner) */}
+        <Toaster position="top-center" richColors closeButton /> 
+      </body>
     </html>
   );
 }

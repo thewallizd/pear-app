@@ -3,24 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "cross-env NODE_OPTIONS='--max-old-space-size=4096' next dev",
+    "build": "cross-env NODE_OPTIONS='--max-old-space-size=4096' next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "16.1.4",
+    "@supabase/supabase-js": "latest",
+    "date-fns": "^4.1.0",
+    "framer-motion": "latest",
+    "lucide-react": "^0.563.0",
+    "next": "15.1.4",
     "react": "latest",
     "react-dom": "latest",
-    "@supabase/supabase-js": "latest",
-    "@tailwindcss/postcss": "latest",
-    "postcss": "latest",
-    "tailwindcss": "latest",
-    "framer-motion": "latest",
-    "lucide-react": "latest"
+    "sonner": "^2.0.7",
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "autoprefixer": "^10.4.24",
+    "cross-env": "^10.1.0",
     "eslint": "latest",
-    "eslint-config-next": "latest"
+    "eslint-config-next": "latest",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17"
   }
 }

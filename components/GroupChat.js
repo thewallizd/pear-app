@@ -1,12 +1,14 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { ArrowLeft, Send, Trash2, LogOut, MoreVertical, Loader2 } from "lucide-react"; // Import Ikon
 
 export default function GroupChat({ group, myName, onBack }) {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [isMember, setIsMember] = useState(false);
-  const [sending, setSending] = useState(false); // Loading state saat kirim
+  const [sending, setSending] = useState(false);
+  const [showMenu, setShowMenu] = useState(false); // Menu dropdown untuk Admin
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -19,7 +21,6 @@ export default function GroupChat({ group, myName, onBack }) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "group_messages", filter: `group_id=eq.${group.id}` },
         (payload) => {
-          // Hanya tambahkan pesan jika ID-nya belum ada di state (Mencegah duplikat)
           setMessages((prev) => {
             if (prev.some(msg => msg.id === payload.new.id)) return prev;
             return [...prev, payload.new];
@@ -45,8 +46,13 @@ export default function GroupChat({ group, myName, onBack }) {
   };
 
   const checkMembership = async () => {
+    // Kalau Global, otomatis member
+    if (group.id === 'global') {
+        setIsMember(true);
+        return;
+    }
     const { data } = await supabase.from("group_members").select("*").eq("group_id", group.id).eq("username", myName).single();
-    if (data || group.id === 'global' || group.admin === myName) setIsMember(true);
+    if (data || group.admin === myName) setIsMember(true);
   };
 
   const scrollToBottom = () => {
@@ -56,10 +62,10 @@ export default function GroupChat({ group, myName, onBack }) {
   };
 
   const sendMessage = async (e) => {
-    e?.preventDefault(); // Handle form submit
+    e?.preventDefault();
     if (!newMessage.trim() || sending) return;
 
-    setSending(true); // Kunci tombol biar gak spam
+    setSending(true);
 
     // Auto-Join logic
     if (!isMember && group.id !== 'global') {
@@ -67,8 +73,6 @@ export default function GroupChat({ group, myName, onBack }) {
         setIsMember(true);
     }
 
-    // 1. Kirim ke Database SAJA. Jangan update state manual disini.
-    // Biarkan fitur Realtime (useEffect di atas) yang menangkap pesan ini dan menampilkannya.
     const { error } = await supabase.from("group_messages").insert([
       { group_id: group.id, sender: myName, content: newMessage }
     ]);
@@ -79,44 +83,76 @@ export default function GroupChat({ group, myName, onBack }) {
     setSending(false);
   };
 
-  // Fitur Enter to Send
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+  // LOGIC KELUAR GRUP
+  const handleLeaveGroup = async () => {
+      if (confirm("Yakin mau keluar dari grup ini?")) {
+          await supabase.from("group_members").delete().eq("group_id", group.id).eq("username", myName);
+          onBack();
+      }
   };
 
-  // Logic Hapus/Keluar sama seperti sebelumnya (saya singkat biar fokus ke fix chat)
-  const handleLeaveGroup = async () => { /* ... kode lama ... */ alert("Keluar berhasil"); onBack(); };
-  const handleDeleteGroup = async () => { /* ... kode lama ... */ alert("Grup bubar"); onBack(); };
+  // LOGIC HAPUS GRUP (ADMIN ONLY)
+  const handleDeleteGroup = async () => {
+      if (confirm("Yakin bubarkan grup? Semua chat akan hilang.")) {
+          await supabase.from("groups").delete().eq("id", group.id);
+          onBack();
+      }
+  };
 
   const isAdmin = group.admin === myName && group.id !== 'global';
   const isGlobal = group.id === 'global';
 
   return (
-    <div className="flex flex-col h-full bg-white animate-in slide-in-from-right">
-      <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+    <div className="flex flex-col h-full bg-white dark:bg-slate-800 animate-in slide-in-from-right relative transition-colors">
+      
+      {/* HEADER */}
+      <div className="p-3 md:p-4 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center bg-white dark:bg-slate-800 z-10 sticky top-0">
         <div className="flex items-center gap-3">
-            <button onClick={onBack} className="text-gray-400 hover:text-gray-800 text-xl">←</button>
+            <button onClick={onBack} className="bg-gray-100 dark:bg-slate-700 w-8 h-8 rounded-full flex items-center justify-center text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-600 transition">
+                <ArrowLeft size={18} />
+            </button>
             <div>
-                <h3 className="font-bold text-gray-800">{group.name}</h3>
-                <p className="text-[10px] text-gray-400">{isGlobal ? "Publik" : `Admin: @${group.admin}`}</p>
+                <h3 className="font-bold text-gray-800 dark:text-white text-sm md:text-base">{group.name}</h3>
+                <p className="text-[10px] text-gray-400 dark:text-slate-400">{isGlobal ? "Ruang Publik" : `Admin: @${group.admin}`}</p>
             </div>
         </div>
-        {/* Tombol Hapus/Keluar disembunyikan untuk ringkas, pakai kode sebelumnya */}
+
+        {/* MENU OPSI (Hanya untuk grup biasa) */}
+        {!isGlobal && (
+            <div className="relative">
+                <button onClick={() => setShowMenu(!showMenu)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-slate-300 transition">
+                    <MoreVertical size={20} />
+                </button>
+                
+                {/* Dropdown Menu */}
+                {showMenu && (
+                    <div className="absolute right-0 top-10 bg-white dark:bg-slate-900 shadow-xl border border-gray-100 dark:border-slate-700 rounded-xl overflow-hidden min-w-[150px] z-50 animate-in fade-in slide-in-from-top-2">
+                        {isAdmin ? (
+                            <button onClick={handleDeleteGroup} className="w-full text-left px-4 py-3 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
+                                <Trash2 size={16} /> Bubarkan
+                            </button>
+                        ) : (
+                            <button onClick={handleLeaveGroup} className="w-full text-left px-4 py-3 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
+                                <LogOut size={16} /> Keluar
+                            </button>
+                        )}
+                    </div>
+                )}
+            </div>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#e5ddd5]/30">
+      {/* CHAT AREA */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#f0f2f5] dark:bg-slate-900/50">
         {messages.map((msg) => {
           const isMe = msg.sender === myName;
           return (
             <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
-              {!isMe && <span className="text-[10px] text-gray-500 mb-1 ml-1 font-bold">@{msg.sender}</span>}
-              <div className={`max-w-[80%] px-4 py-2 rounded-2xl text-sm shadow-sm ${isMe ? "bg-purple-600 text-white rounded-br-none" : "bg-white text-gray-800 rounded-bl-none"}`}>
+              {!isMe && <span className="text-[10px] text-gray-500 dark:text-slate-400 mb-1 ml-1 font-bold">@{msg.sender}</span>}
+              <div className={`max-w-[80%] px-4 py-2 rounded-2xl text-sm shadow-sm relative ${isMe ? "bg-purple-600 text-white rounded-br-none" : "bg-white dark:bg-slate-700 dark:text-white text-gray-800 rounded-bl-none"}`}>
                 {msg.content}
               </div>
-              <span className="text-[9px] text-gray-400 mt-1 mx-1">
+              <span className="text-[9px] text-gray-400 dark:text-slate-500 mt-1 mx-1">
                 {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
               </span>
             </div>
@@ -125,16 +161,16 @@ export default function GroupChat({ group, myName, onBack }) {
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={sendMessage} className="p-3 bg-white border-t border-gray-100 flex gap-2">
+      {/* INPUT */}
+      <form onSubmit={sendMessage} className="p-3 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-700 flex gap-2">
         <input
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
-          onKeyDown={handleKeyDown} // <-- Pasang listener Enter disini
-          placeholder={isMember ? "Ketik pesan..." : "Gabung dulu..."}
-          className="flex-1 bg-gray-100 border-0 rounded-full px-4 py-2 text-sm focus:ring-2 focus:ring-purple-200 focus:outline-none"
+          placeholder={isMember || isGlobal ? "Ketik pesan..." : "Gabung & kirim..."}
+          className="flex-1 bg-gray-100 dark:bg-slate-700 dark:text-white border-0 rounded-full px-4 py-2 text-sm focus:ring-2 focus:ring-purple-200 dark:focus:ring-purple-900 focus:outline-none transition placeholder:text-gray-400 dark:placeholder:text-slate-500"
         />
         <button type="submit" disabled={!newMessage.trim() || sending} className="bg-purple-600 text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-purple-700 transition disabled:opacity-50">
-          {sending ? "..." : "➤"}
+          {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
         </button>
       </form>
     </div>
